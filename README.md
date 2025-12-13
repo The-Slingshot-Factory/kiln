@@ -1,6 +1,6 @@
 # Kiln
 
-A blank Dear ImGui desktop application using GLFW + OpenGL3 backend.
+A minimal Dear ImGui desktop application using GLFW + OpenGL3 backend.
 
 ## Requirements
 
@@ -28,13 +28,20 @@ cmake --build build
 ./build/kiln
 ```
 
+## Project Structure
+
+```
+src/
+├── main.cpp    # Application entry point
+└── config.h    # App name and window settings
+```
+
+## IDE Support
+
+A `.clangd` file is included that points to `build/compile_commands.json` for proper IntelliSense. Run `cmake -B build` first to generate it.
+
 ## Features
 
 - Dear ImGui v1.91.6
 - GLFW 3.4 for window/input handling
 - OpenGL 3.3 rendering
-- Docking support enabled
-- Multi-viewport support enabled
-- Keyboard and gamepad navigation enabled
-
-

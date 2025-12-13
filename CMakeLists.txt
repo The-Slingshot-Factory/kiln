@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(kiln VERSION 1.0.0 LANGUAGES CXX)
+project(kiln VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,6 +28,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui)
 
+# tinyfiledialogs - cross-platform native file dialogs
+FetchContent_Declare(
+    tinyfiledialogs
+    GIT_REPOSITORY https://github.com/native-toolkit/tinyfiledialogs.git
+    GIT_TAG master
+)
+FetchContent_MakeAvailable(tinyfiledialogs)
+
+add_library(tinyfiledialogs STATIC ${tinyfiledialogs_SOURCE_DIR}/tinyfiledialogs.c)
+target_include_directories(tinyfiledialogs PUBLIC ${tinyfiledialogs_SOURCE_DIR})
+
 # Create ImGui library
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -52,6 +63,6 @@ target_link_libraries(imgui PUBLIC OpenGL::GL)
 
 # Main executable
 add_executable(${PROJECT_NAME} src/main.cpp)
-target_link_libraries(${PROJECT_NAME} PRIVATE imgui)
+target_link_libraries(${PROJECT_NAME} PRIVATE imgui tinyfiledialogs)
 
 
