@@ -64,6 +64,7 @@ cmake --build build -j$(nproc)
 - **Real-time visualization** — OpenGL 3.3 rendering for smooth, high-fidelity simulation previews
 - **Cross-platform** — Runs on Linux (Windows/macOS support planned)
 - **Native look & feel** — Built with Dear ImGui for responsive, GPU-accelerated UI
+- **Modular screen architecture** — Clean separation of UI concerns for scalable development
 
 ---
 
@@ -82,13 +83,43 @@ cmake --build build -j$(nproc)
 ```
 kiln/
 ├── src/
-│   ├── main.cpp      # Application entry point & UI
-│   └── config.h      # Window settings and app configuration
-├── CMakeLists.txt    # Build configuration (auto-fetches dependencies)
-└── build/            # Generated build artifacts
-    ├── kiln          # Executable
-    └── fonts/        # Bundled Inter font
+│   ├── main.cpp              # Application entry point & main loop
+│   ├── config.h              # Window settings and app configuration
+│   └── screens/              # Modular screen system
+│       ├── screen.h          # Base screen interface
+│       ├── welcome_screen.h  # Welcome screen header
+│       ├── welcome_screen.cpp# Welcome screen implementation
+│       ├── project_screen.h  # Project screen header
+│       └── project_screen.cpp# Project screen implementation
+├── CMakeLists.txt            # Build configuration (auto-fetches dependencies)
+└── build/                    # Generated build artifacts
+    ├── kiln                  # Executable
+    └── fonts/                # Bundled Inter font
 ```
+
+### Screen Architecture
+
+Kiln uses a **modular screen system** where each screen is a self-contained class:
+
+```cpp
+class Screen
+{
+public:
+    virtual void onEnter() {}   // Called when screen becomes active
+    virtual void onExit() {}    // Called when screen is deactivated
+    virtual void update() = 0;  // Draw and handle UI each frame
+};
+```
+
+**Current screens:**
+- `WelcomeScreen` — Initial landing screen for creating/opening projects
+- `ProjectScreen` — Main project workspace with menu bar
+
+**Adding a new screen:**
+1. Create `my_screen.h` and `my_screen.cpp` in `src/screens/`
+2. Inherit from `Screen` and implement `update()`
+3. Use `switchTo<MyScreen>(args...)` to transition between screens
+4. Add the `.cpp` file to `CMakeLists.txt`
 
 ---
 

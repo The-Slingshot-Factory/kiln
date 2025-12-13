@@ -78,8 +78,12 @@ target_link_libraries(imgui PUBLIC glfw)
 find_package(OpenGL REQUIRED)
 target_link_libraries(imgui PUBLIC OpenGL::GL)
 
-# Main executable
-add_executable(${PROJECT_NAME} src/main.cpp)
+# Main executable with screens
+add_executable(${PROJECT_NAME}
+    src/main.cpp
+    src/screens/welcome_screen.cpp
+    src/screens/project_screen.cpp
+)
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(${PROJECT_NAME} PRIVATE imgui tinyfiledialogs)
-
-
