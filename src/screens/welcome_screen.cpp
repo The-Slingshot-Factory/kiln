@@ -46,8 +46,16 @@ void WelcomeScreen::update()
             if (parentPath)
             {
                 projectPath = std::filesystem::path(parentPath) / projectName;
-                std::filesystem::create_directories(projectPath);
-                switchTo<ProjectScreen>(projectPath);
+                if (std::filesystem::exists(projectPath))
+                {
+                    tinyfd_messageBox("Error", "A project with this name already exists at the selected location.", "ok", "error", 1);
+                    projectPath.clear();
+                }
+                else
+                {
+                    std::filesystem::create_directories(projectPath);
+                    switchTo<ProjectScreen>(projectPath);
+                }
             }
         }
     }
