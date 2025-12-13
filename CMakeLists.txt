@@ -39,6 +39,23 @@ FetchContent_MakeAvailable(tinyfiledialogs)
 add_library(tinyfiledialogs STATIC ${tinyfiledialogs_SOURCE_DIR}/tinyfiledialogs.c)
 target_include_directories(tinyfiledialogs PUBLIC ${tinyfiledialogs_SOURCE_DIR})
 
+# Inter font
+FetchContent_Declare(
+    inter_font
+    URL https://github.com/rsms/inter/releases/download/v4.0/Inter-4.0.zip
+)
+FetchContent_MakeAvailable(inter_font)
+
+# Copy font to build directory
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/fonts)
+configure_file(${inter_font_SOURCE_DIR}/InterVariable.ttf ${CMAKE_BINARY_DIR}/fonts/Inter.ttf COPYONLY)
+
+# Generate paths header
+file(WRITE ${CMAKE_BINARY_DIR}/generated/paths.h
+"#pragma once\n#define FONT_PATH \"${CMAKE_BINARY_DIR}/fonts/Inter.ttf\"\n"
+)
+include_directories(${CMAKE_BINARY_DIR}/generated)
+
 # Create ImGui library
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp

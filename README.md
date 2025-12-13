@@ -1,47 +1,138 @@
-# Kiln
+# 🔥 Kiln
 
-A minimal Dear ImGui desktop application using GLFW + OpenGL3 backend.
+**A studio for creating reinforcement learning environments with high-fidelity simulation.**
 
-## Requirements
+Kiln provides an intuitive interface to design, prototype, and iterate on RL environments—all backed by performant OpenGL rendering for real-time visualization.
 
-- CMake 3.20+
-- C++17 compiler (GCC, Clang, MSVC)
-- OpenGL 3.3+ capable GPU
-- Linux: `libgl1-mesa-dev`, `libxrandr-dev`, `libxinerama-dev`, `libxcursor-dev`, `libxi-dev`
+---
 
-### Install dependencies (Linux)
+## ⚡ Quick Start
+
+### 1. Install Dependencies
+
+<details>
+<summary><b>Ubuntu / Debian</b></summary>
 
 ```bash
-sudo apt install build-essential cmake libgl1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+sudo apt update && sudo apt install -y \
+    build-essential \
+    cmake \
+    libgl1-mesa-dev \
+    libxrandr-dev \
+    libxinerama-dev \
+    libxcursor-dev \
+    libxi-dev
 ```
+</details>
 
-## Build
+<details>
+<summary><b>Fedora</b></summary>
 
 ```bash
+sudo dnf install -y gcc-c++ cmake mesa-libGL-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel
+```
+</details>
+
+<details>
+<summary><b>Arch Linux</b></summary>
+
+```bash
+sudo pacman -S base-devel cmake mesa libxrandr libxinerama libxcursor libxi
+```
+</details>
+
+### 2. Build
+
+```bash
+git clone https://github.com/your-username/kiln.git
+cd kiln
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+cmake --build build -j$(nproc)
 ```
 
-## Run
+### 3. Run
 
 ```bash
 ./build/kiln
 ```
 
-## Project Structure
+---
+
+## 🎯 Features
+
+- **Project-based workflow** — Organize your RL environments into projects
+- **Real-time visualization** — OpenGL 3.3 rendering for smooth, high-fidelity simulation previews
+- **Cross-platform** — Runs on Linux (Windows/macOS support planned)
+- **Native look & feel** — Built with Dear ImGui for responsive, GPU-accelerated UI
+
+---
+
+## 📋 Requirements
+
+| Component | Minimum Version |
+|-----------|-----------------|
+| CMake     | 3.20+           |
+| C++ Compiler | C++17 (GCC 8+, Clang 7+) |
+| OpenGL    | 3.3+            |
+
+---
+
+## 🗂️ Project Structure
 
 ```
-src/
-├── main.cpp    # Application entry point
-└── config.h    # App name and window settings
+kiln/
+├── src/
+│   ├── main.cpp      # Application entry point & UI
+│   └── config.h      # Window settings and app configuration
+├── CMakeLists.txt    # Build configuration (auto-fetches dependencies)
+└── build/            # Generated build artifacts
+    ├── kiln          # Executable
+    └── fonts/        # Bundled Inter font
 ```
 
-## IDE Support
+---
 
-A `.clangd` file is included that points to `build/compile_commands.json` for proper IntelliSense. Run `cmake -B build` first to generate it.
+## 🔧 Development
 
-## Features
+### IDE Setup
 
-- Dear ImGui v1.91.6
-- GLFW 3.4 for window/input handling
-- OpenGL 3.3 rendering
+For IntelliSense/autocomplete, configure your editor to use the generated `compile_commands.json`:
+
+```bash
+# Generate compile commands
+cmake -B build
+
+# For VS Code: .vscode/settings.json
+{ "clangd.arguments": ["--compile-commands-dir=build"] }
+
+# For Neovim/other LSP clients: symlink or set in .clangd
+```
+
+### Build Types
+
+```bash
+# Debug build (with symbols, no optimization)
+cmake -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+
+# Release build (optimized)
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+---
+
+## 📦 Dependencies (auto-fetched)
+
+These are automatically downloaded during the CMake configure step:
+
+- [GLFW 3.4](https://github.com/glfw/glfw) — Window & input handling
+- [Dear ImGui v1.91.6](https://github.com/ocornut/imgui) — Immediate-mode GUI
+- [tinyfiledialogs](https://github.com/native-toolkit/tinyfiledialogs) — Native file dialogs
+- [Inter Font](https://rsms.me/inter/) — Modern, readable UI typography
+
+---
+
+## 📄 License
+
+MIT

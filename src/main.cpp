@@ -1,4 +1,5 @@
 #include "config.h"
+#include "paths.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -23,6 +24,10 @@ int main(int, char**)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
+
+    // Load Inter font
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->AddFontFromFileTTF(FONT_PATH, 18.0f);
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
@@ -101,18 +106,25 @@ int main(int, char**)
         }
         else if (currentScreen == Screen::Project)
         {
-            ImGui::Begin("Project", nullptr, flags);
+            ImGuiWindowFlags projectFlags = flags | ImGuiWindowFlags_MenuBar;
+            ImGui::Begin("Project", nullptr, projectFlags);
+
+            if (ImGui::BeginMenuBar())
+            {
+                if (ImGui::BeginMenu("File"))
+                {
+                    if (ImGui::MenuItem("Close Project"))
+                    {
+                        projectPath.clear();
+                        currentScreen = Screen::Welcome;
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenuBar();
+            }
 
             ImGui::Text("Project: %s", projectPath.filename().string().c_str());
             ImGui::Text("Path: %s", projectPath.string().c_str());
-
-            ImGui::Dummy(ImVec2(0, 20));
-
-            if (ImGui::Button("Close Project"))
-            {
-                projectPath.clear();
-                currentScreen = Screen::Welcome;
-            }
 
             ImGui::End();
         }
