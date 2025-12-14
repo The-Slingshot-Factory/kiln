@@ -57,6 +57,12 @@ int main(int, char**)
             currentScreen->onEnter();
         }
 
+        // Handle exit request
+        if (currentScreen->shouldExit)
+        {
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
+
         ImGui::Render();
         int w, h;
         glfwGetFramebufferSize(window, &w, &h);

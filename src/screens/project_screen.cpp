@@ -29,6 +29,11 @@ void ProjectScreen::update()
                 projectPath.clear();
                 switchTo<WelcomeScreen>(projectPath);
             }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Exit"))
+            {
+                requestExit();
+            }
             ImGui::EndMenu();
         }
         ImGui::EndMenuBar();

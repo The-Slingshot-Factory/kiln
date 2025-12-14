@@ -19,7 +19,11 @@ public:
     // Request to switch to a new screen (set by screens, consumed by main loop)
     std::unique_ptr<Screen> nextScreen = nullptr;
 
+    // Request to exit the application
+    bool shouldExit = false;
+
 protected:
+    void requestExit() { shouldExit = true; }
     // Helper to request a screen transition
     template<typename T, typename... Args>
     void switchTo(Args&&... args)
