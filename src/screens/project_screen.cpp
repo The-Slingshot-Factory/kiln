@@ -5,15 +5,14 @@
 #include <algorithm>
 #include <cstring>
 
-// File extension categories (OpenUSD-compatible formats)
+// Scene file extensions (OpenUSD formats)
 static const std::vector<std::string> SCENE_EXTENSIONS = {".usda", ".usdc", ".usd", ".usdz"};
-static const std::vector<std::string> MODEL_EXTENSIONS = {".usda", ".usdc", ".usd", ".usdz", ".obj", ".fbx", ".gltf", ".glb"};
 
-static bool hasExtension(const std::string& ext, const std::vector<std::string>& extensions)
+static bool isSceneFile(const std::string& ext)
 {
     std::string lowerExt = ext;
     std::transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::tolower);
-    return std::find(extensions.begin(), extensions.end(), lowerExt) != extensions.end();
+    return std::find(SCENE_EXTENSIONS.begin(), SCENE_EXTENSIONS.end(), lowerExt) != SCENE_EXTENSIONS.end();
 }
 
 ProjectScreen::ProjectScreen(std::filesystem::path& path)
@@ -21,27 +20,22 @@ ProjectScreen::ProjectScreen(std::filesystem::path& path)
 
 void ProjectScreen::onEnter()
 {
-    scanProjectAssets();
+    scanProjectScenes();
 }
 
-void ProjectScreen::scanProjectAssets()
+void ProjectScreen::scanProjectScenes()
 {
-    // Clear existing
     scenes.clear();
-    models.clear();
     
-    // Scan the project directory
     if (std::filesystem::exists(projectPath) && std::filesystem::is_directory(projectPath))
     {
         scanDirectory(projectPath);
     }
     
-    // Sort all lists by name
-    auto sortByName = [](const AssetInfo& a, const AssetInfo& b) {
+    // Sort by name
+    std::sort(scenes.begin(), scenes.end(), [](const SceneInfo& a, const SceneInfo& b) {
         return a.name < b.name;
-    };
-    std::sort(scenes.begin(), scenes.end(), sortByName);
-    std::sort(models.begin(), models.end(), sortByName);
+    });
 }
 
 void ProjectScreen::scanDirectory(const std::filesystem::path& dir)
@@ -51,7 +45,6 @@ void ProjectScreen::scanDirectory(const std::filesystem::path& dir)
         {
             if (entry.is_directory())
             {
-                // Skip hidden directories and common non-asset folders
                 std::string name = entry.path().filename().string();
                 if (name[0] != '.' && name != "build" && name != "node_modules")
                 {
@@ -60,31 +53,18 @@ void ProjectScreen::scanDirectory(const std::filesystem::path& dir)
             }
             else if (entry.is_regular_file())
             {
-                categorizeAsset(entry.path());
+                std::string ext = entry.path().extension().string();
+                if (!ext.empty() && isSceneFile(ext))
+                {
+                    SceneInfo info;
+                    info.name = entry.path().filename().string();
+                    info.path = entry.path();
+                    info.extension = ext;
+                    scenes.push_back(info);
+                }
             }
         }
     } catch (const std::filesystem::filesystem_error&) {
-        // Permission denied or other filesystem error - skip
-    }
-}
-
-void ProjectScreen::categorizeAsset(const std::filesystem::path& path)
-{
-    std::string ext = path.extension().string();
-    if (ext.empty()) return;
-    
-    AssetInfo info;
-    info.name = path.filename().string();
-    info.path = path;
-    info.extension = ext;
-    
-    if (hasExtension(ext, SCENE_EXTENSIONS))
-    {
-        scenes.push_back(info);
-    }
-    else if (hasExtension(ext, MODEL_EXTENSIONS))
-    {
-        models.push_back(info);
     }
 }
 
@@ -114,7 +94,6 @@ void ProjectScreen::update()
             {
                 if (ImGui::MenuItem("Folder"))
                 {
-                    // Create folder in project root or selected directory
                     std::filesystem::path parentPath = projectPath;
                     if (!selectedFilePath.empty() && std::filesystem::is_directory(selectedFilePath))
                     {
@@ -125,9 +104,9 @@ void ProjectScreen::update()
                 ImGui::EndMenu();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Refresh Assets", "Ctrl+R"))
+            if (ImGui::MenuItem("Refresh", "Ctrl+R"))
             {
-                scanProjectAssets();
+                scanProjectScenes();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Close Project"))
@@ -154,14 +133,12 @@ void ProjectScreen::update()
     ImGui::BeginChild("FileTreeRegion", ImVec2(0, ImGui::GetContentRegionAvail().y * 0.45f), false);
     if (std::filesystem::exists(projectPath))
     {
-        // Root project folder
         ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_OpenOnArrow 
                                      | ImGuiTreeNodeFlags_DefaultOpen
                                      | ImGuiTreeNodeFlags_SpanAvailWidth;
         
         bool rootOpen = ImGui::TreeNodeEx(projectPath.filename().string().c_str(), rootFlags);
         
-        // Right-click context menu for root folder
         if (ImGui::BeginPopupContextItem())
         {
             if (ImGui::MenuItem("New Folder"))
@@ -187,25 +164,10 @@ void ProjectScreen::update()
     ImGui::Separator();
     ImGui::Spacing();
     
-    // --- Section 2: Assets Browser (Tabbed) ---
-    if (ImGui::BeginTabBar("AssetTabs", ImGuiTabBarFlags_FittingPolicyScroll))
-    {
-        // Scenes Tab
-        if (ImGui::BeginTabItem("Scenes"))
-        {
-            renderAssetList(scenes, "No scenes found");
-            ImGui::EndTabItem();
-        }
-        
-        // Models Tab
-        if (ImGui::BeginTabItem("Models"))
-        {
-            renderAssetList(models, "No models found");
-            ImGui::EndTabItem();
-        }
-        
-        ImGui::EndTabBar();
-    }
+    // --- Section 2: Scenes List ---
+    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Scenes");
+    ImGui::Separator();
+    renderScenesList();
     
     ImGui::EndChild();
     
@@ -242,7 +204,6 @@ void ProjectScreen::update()
     // ═══════════════════════════════════════════════
     ImGui::BeginChild("Viewport", ImVec2(0, 0), true);
     
-    // Show selected file info
     if (!selectedFilePath.empty())
     {
         ImGui::Text("Selected File:");
@@ -250,20 +211,19 @@ void ProjectScreen::update()
         ImGui::Spacing();
     }
     
-    if (!selectedAssetPath.empty())
+    if (!selectedScenePath.empty())
     {
-        ImGui::Text("Selected Asset:");
-        ImGui::TextWrapped("%s", selectedAssetPath.string().c_str());
+        ImGui::Text("Selected Scene:");
+        ImGui::TextWrapped("%s", selectedScenePath.string().c_str());
     }
     
-    if (selectedFilePath.empty() && selectedAssetPath.empty())
+    if (selectedFilePath.empty() && selectedScenePath.empty())
     {
-        ImGui::TextDisabled("Select a file or asset to view details");
+        ImGui::TextDisabled("Select a file or scene to view details");
     }
     
     ImGui::EndChild();
 
-    // Render the new folder popup if open
     renderNewFolderPopup();
 
     ImGui::End();
@@ -272,21 +232,17 @@ void ProjectScreen::update()
 void ProjectScreen::renderFileTree(const std::filesystem::path& path)
 {
     try {
-        // Collect entries and sort (directories first, then alphabetically)
         std::vector<std::filesystem::directory_entry> entries;
         for (const auto& entry : std::filesystem::directory_iterator(path))
         {
-            // Skip hidden files/folders
             if (entry.path().filename().string()[0] == '.')
                 continue;
             entries.push_back(entry);
         }
         
         std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
-            // Directories first
             if (a.is_directory() != b.is_directory())
                 return a.is_directory();
-            // Then alphabetically
             return a.path().filename() < b.path().filename();
         });
         
@@ -310,7 +266,6 @@ void ProjectScreen::renderFileTree(const std::filesystem::path& path)
                     selectedFilePath = p;
                 }
                 
-                // Right-click context menu for directories
                 if (ImGui::BeginPopupContextItem())
                 {
                     if (ImGui::MenuItem("New Folder"))
@@ -335,18 +290,13 @@ void ProjectScreen::renderFileTree(const std::filesystem::path& path)
                 if (selectedFilePath == p)
                     flags |= ImGuiTreeNodeFlags_Selected;
                 
-                // Add file type indicator
-                std::string ext = p.extension().string();
-                std::string displayName = name;
-                
-                ImGui::TreeNodeEx(displayName.c_str(), flags);
+                ImGui::TreeNodeEx(name.c_str(), flags);
                 
                 if (ImGui::IsItemClicked())
                 {
                     selectedFilePath = p;
                 }
                 
-                // Tooltip with full path
                 if (ImGui::IsItemHovered())
                 {
                     ImGui::BeginTooltip();
@@ -360,32 +310,30 @@ void ProjectScreen::renderFileTree(const std::filesystem::path& path)
     }
 }
 
-void ProjectScreen::renderAssetList(const std::vector<AssetInfo>& assets, const char* emptyMessage)
+void ProjectScreen::renderScenesList()
 {
-    if (assets.empty())
+    if (scenes.empty())
     {
-        ImGui::TextDisabled("%s", emptyMessage);
+        ImGui::TextDisabled("No scenes found");
         return;
     }
     
-    for (const auto& asset : assets)
+    for (const auto& scene : scenes)
     {
-        bool selected = (selectedAssetPath == asset.path);
+        bool selected = (selectedScenePath == scene.path);
         
-        // Show extension as a badge
-        ImGui::TextDisabled("%s", asset.extension.c_str());
+        ImGui::TextDisabled("%s", scene.extension.c_str());
         ImGui::SameLine();
         
-        if (ImGui::Selectable(asset.name.c_str(), selected))
+        if (ImGui::Selectable(scene.name.c_str(), selected))
         {
-            selectedAssetPath = asset.path;
+            selectedScenePath = scene.path;
         }
         
-        // Tooltip with full path
         if (ImGui::IsItemHovered())
         {
             ImGui::BeginTooltip();
-            ImGui::Text("%s", asset.path.string().c_str());
+            ImGui::Text("%s", scene.path.string().c_str());
             ImGui::EndTooltip();
         }
     }
@@ -413,7 +361,6 @@ void ProjectScreen::createNewFolder()
             selectedFilePath = newPath;
         }
     } catch (const std::filesystem::filesystem_error&) {
-        // Failed to create folder
     }
 }
 
@@ -440,7 +387,6 @@ void ProjectScreen::renderNewFolderPopup()
         bool enterPressed = ImGui::InputText("##FolderName", newFolderName, sizeof(newFolderName), 
                                               ImGuiInputTextFlags_EnterReturnsTrue);
         
-        // Focus the input field when popup opens
         if (ImGui::IsWindowAppearing())
         {
             ImGui::SetKeyboardFocusHere(-1);

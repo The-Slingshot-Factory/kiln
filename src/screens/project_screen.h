@@ -5,8 +5,8 @@
 #include <vector>
 #include <string>
 
-// Represents a discovered asset in the project
-struct AssetInfo {
+// Represents a discovered scene in the project
+struct SceneInfo {
     std::string name;
     std::filesystem::path path;
     std::string extension;
@@ -25,11 +25,10 @@ private:
     
     // Selection state
     std::filesystem::path selectedFilePath;
-    std::filesystem::path selectedAssetPath;
+    std::filesystem::path selectedScenePath;
     
-    // Cached asset lists
-    std::vector<AssetInfo> scenes;
-    std::vector<AssetInfo> models;
+    // Cached scenes list
+    std::vector<SceneInfo> scenes;
     
     // Panel width (resizable in future)
     float panelWidth = 280.0f;
@@ -44,12 +43,11 @@ private:
     
     // Rendering helpers
     void renderFileTree(const std::filesystem::path& path);
-    void renderAssetList(const std::vector<AssetInfo>& assets, const char* emptyMessage);
+    void renderScenesList();
     
-    // Asset discovery
-    void scanProjectAssets();
+    // Scene discovery
+    void scanProjectScenes();
     void scanDirectory(const std::filesystem::path& dir);
-    void categorizeAsset(const std::filesystem::path& path);
     
     // Folder operations
     void openNewFolderDialog(const std::filesystem::path& parentPath);
