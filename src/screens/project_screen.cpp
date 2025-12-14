@@ -3,6 +3,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cstring>
 
 // File extension categories (OpenUSD-compatible formats)
 static const std::vector<std::string> SCENE_EXTENSIONS = {".usda", ".usdc", ".usd", ".usdz"};
@@ -109,6 +110,21 @@ void ProjectScreen::update()
     {
         if (ImGui::BeginMenu("File"))
         {
+            if (ImGui::BeginMenu("New"))
+            {
+                if (ImGui::MenuItem("Folder"))
+                {
+                    // Create folder in project root or selected directory
+                    std::filesystem::path parentPath = projectPath;
+                    if (!selectedFilePath.empty() && std::filesystem::is_directory(selectedFilePath))
+                    {
+                        parentPath = selectedFilePath;
+                    }
+                    openNewFolderDialog(parentPath);
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Refresh Assets", "Ctrl+R"))
             {
                 scanProjectAssets();
@@ -144,6 +160,17 @@ void ProjectScreen::update()
                                      | ImGuiTreeNodeFlags_SpanAvailWidth;
         
         bool rootOpen = ImGui::TreeNodeEx(projectPath.filename().string().c_str(), rootFlags);
+        
+        // Right-click context menu for root folder
+        if (ImGui::BeginPopupContextItem())
+        {
+            if (ImGui::MenuItem("New Folder"))
+            {
+                openNewFolderDialog(projectPath);
+            }
+            ImGui::EndPopup();
+        }
+        
         if (rootOpen)
         {
             renderFileTree(projectPath);
@@ -236,6 +263,9 @@ void ProjectScreen::update()
     
     ImGui::EndChild();
 
+    // Render the new folder popup if open
+    renderNewFolderPopup();
+
     ImGui::End();
 }
 
@@ -278,6 +308,16 @@ void ProjectScreen::renderFileTree(const std::filesystem::path& path)
                 if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
                 {
                     selectedFilePath = p;
+                }
+                
+                // Right-click context menu for directories
+                if (ImGui::BeginPopupContextItem())
+                {
+                    if (ImGui::MenuItem("New Folder"))
+                    {
+                        openNewFolderDialog(p);
+                    }
+                    ImGui::EndPopup();
                 }
                 
                 if (open)
@@ -348,5 +388,81 @@ void ProjectScreen::renderAssetList(const std::vector<AssetInfo>& assets, const 
             ImGui::Text("%s", asset.path.string().c_str());
             ImGui::EndTooltip();
         }
+    }
+}
+
+void ProjectScreen::openNewFolderDialog(const std::filesystem::path& parentPath)
+{
+    newFolderParentPath = parentPath;
+    std::memset(newFolderName, 0, sizeof(newFolderName));
+    std::strcpy(newFolderName, "New Folder");
+    showNewFolderPopup = true;
+    ImGui::OpenPopup("New Folder");
+}
+
+void ProjectScreen::createNewFolder()
+{
+    if (std::strlen(newFolderName) == 0) return;
+    
+    std::filesystem::path newPath = newFolderParentPath / newFolderName;
+    
+    try {
+        if (!std::filesystem::exists(newPath))
+        {
+            std::filesystem::create_directory(newPath);
+            selectedFilePath = newPath;
+        }
+    } catch (const std::filesystem::filesystem_error&) {
+        // Failed to create folder
+    }
+}
+
+void ProjectScreen::renderNewFolderPopup()
+{
+    if (showNewFolderPopup)
+    {
+        ImGui::OpenPopup("New Folder");
+        showNewFolderPopup = false;
+    }
+    
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    
+    if (ImGui::BeginPopupModal("New Folder", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Text("Create new folder in:");
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", newFolderParentPath.string().c_str());
+        ImGui::Spacing();
+        
+        ImGui::Text("Folder name:");
+        ImGui::SetNextItemWidth(300);
+        
+        bool enterPressed = ImGui::InputText("##FolderName", newFolderName, sizeof(newFolderName), 
+                                              ImGuiInputTextFlags_EnterReturnsTrue);
+        
+        // Focus the input field when popup opens
+        if (ImGui::IsWindowAppearing())
+        {
+            ImGui::SetKeyboardFocusHere(-1);
+        }
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        if (ImGui::Button("Create", ImVec2(120, 0)) || enterPressed)
+        {
+            createNewFolder();
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Cancel", ImVec2(120, 0)))
+        {
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::EndPopup();
     }
 }

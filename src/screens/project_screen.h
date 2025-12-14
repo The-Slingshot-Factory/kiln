@@ -34,6 +34,14 @@ private:
     // Panel width (resizable in future)
     float panelWidth = 280.0f;
     
+    // New folder dialog state
+    bool showNewFolderPopup = false;
+    std::filesystem::path newFolderParentPath;
+    char newFolderName[256] = "";
+    
+    // Context menu state
+    std::filesystem::path contextMenuPath;
+    
     // Rendering helpers
     void renderFileTree(const std::filesystem::path& path);
     void renderAssetList(const std::vector<AssetInfo>& assets, const char* emptyMessage);
@@ -42,4 +50,9 @@ private:
     void scanProjectAssets();
     void scanDirectory(const std::filesystem::path& dir);
     void categorizeAsset(const std::filesystem::path& path);
+    
+    // Folder operations
+    void openNewFolderDialog(const std::filesystem::path& parentPath);
+    void createNewFolder();
+    void renderNewFolderPopup();
 };
