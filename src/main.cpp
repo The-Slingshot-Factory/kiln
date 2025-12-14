@@ -26,8 +26,9 @@ int main(int, char**)
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
 
-    // Load Inter font
+    // Configure ImGui
     ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;  // Disable imgui.ini generation
     io.Fonts->AddFontFromFileTTF(FONT_PATH, 18.0f);
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
