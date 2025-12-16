@@ -7,9 +7,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <fstream>
 #include <functional>
-#include <iterator>
 
 // Scene file extensions (OpenUSD formats)
 static const std::vector<std::string> SCENE_EXTENSIONS = {".usda", ".usdc", ".usd", ".usdz"};
