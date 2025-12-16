@@ -1,11 +1,11 @@
-#include "config.h"
+#include "core/config.h"
 #include "paths.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
-#include "screens/screen.h"
-#include "screens/welcome_screen.h"
+#include "ui/screens/screen.h"
+#include "ui/screens/welcome_screen.h"
 
 #include <GLFW/glfw3.h>
 #include <filesystem>

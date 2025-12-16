@@ -16,6 +16,12 @@ public:
     void zoom(float delta);
     void reset();
     
+    // Keyboard movement
+    void moveForward(float speed);
+    void moveBackward(float speed);
+    void moveLeft(float speed);
+    void moveRight(float speed);
+    
 private:
     static constexpr float ORBIT_SENSITIVITY = 0.3f;
     static constexpr float PAN_SENSITIVITY = 0.01f;

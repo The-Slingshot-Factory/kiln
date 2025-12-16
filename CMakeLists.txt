@@ -86,12 +86,13 @@ target_link_libraries(imgui PUBLIC glfw)
 find_package(OpenGL REQUIRED)
 target_link_libraries(imgui PUBLIC OpenGL::GL)
 
-# Main executable with screens, scene, and renderer
+# Main executable
 add_executable(${PROJECT_NAME}
     src/main.cpp
-    src/screens/welcome_screen.cpp
-    src/screens/project_screen.cpp
+    src/ui/screens/welcome_screen.cpp
+    src/ui/screens/project_screen.cpp
     src/scene/scene.cpp
+    src/scene/primitives/plane_tool.cpp
     src/renderer/camera.cpp
     src/renderer/scene_renderer.cpp
 )

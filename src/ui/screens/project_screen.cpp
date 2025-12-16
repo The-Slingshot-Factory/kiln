@@ -1,6 +1,6 @@
 #include "project_screen.h"
 #include "welcome_screen.h"
-#include "../scene/scene.h"
+#include "../../scene/scene.h"
 #include "imgui.h"
 #include "tinyfiledialogs.h"
 
@@ -22,7 +22,11 @@ static bool isSceneFile(const std::string& ext)
 }
 
 ProjectScreen::ProjectScreen(std::filesystem::path& path)
-    : projectPath(path) {}
+    : projectPath(path)
+{
+    // Initialize tools
+    primitiveTools.push_back(std::make_unique<PlaneTool>());
+}
 
 void ProjectScreen::onEnter()
 {
@@ -106,16 +110,17 @@ void ProjectScreen::update()
             {
                 if (ImGui::MenuItem("Scene..."))
                 {
-                    openNewSceneDialog();
+                    std::filesystem::path loc = (!selectedFilePath.empty() && std::filesystem::is_directory(selectedFilePath))
+                                               ? selectedFilePath : projectPath;
+                    newSceneDialog.setLocation(loc, projectPath);
+                    newSceneDialog.open();
                 }
                 if (ImGui::MenuItem("Folder"))
                 {
-                    std::filesystem::path parentPath = projectPath;
-                    if (!selectedFilePath.empty() && std::filesystem::is_directory(selectedFilePath))
-                    {
-                        parentPath = selectedFilePath;
-                    }
-                    openNewFolderDialog(parentPath);
+                    std::filesystem::path parentPath = (!selectedFilePath.empty() && std::filesystem::is_directory(selectedFilePath))
+                                                      ? selectedFilePath : projectPath;
+                    newFolderDialog.setParentPath(parentPath);
+                    newFolderDialog.open();
                 }
                 ImGui::EndMenu();
             }
@@ -159,12 +164,13 @@ void ProjectScreen::update()
         {
             if (ImGui::MenuItem("New Scene..."))
             {
-                newSceneLocation = projectPath;
-                openNewSceneDialog();
+                newSceneDialog.setLocation(projectPath, projectPath);
+                newSceneDialog.open();
             }
             if (ImGui::MenuItem("New Folder"))
             {
-                openNewFolderDialog(projectPath);
+                newFolderDialog.setParentPath(projectPath);
+                newFolderDialog.open();
             }
             ImGui::EndPopup();
         }
@@ -261,8 +267,22 @@ void ProjectScreen::update()
     // ═══════════════════════════════════════════════
     renderPropertiesPanel();
 
-    renderNewFolderPopup();
-    renderNewScenePopup();
+    // Render dialogs
+    if (newFolderDialog.render())
+    {
+        scanProjectScenes();
+    }
+    
+    if (newSceneDialog.render())
+    {
+        scanProjectScenes();
+        auto createdPath = newSceneDialog.getCreatedPath();
+        if (!createdPath.empty())
+        {
+            selectedScenePath = createdPath;
+            loadScene(createdPath);
+        }
+    }
 
     ImGui::End();
 }
@@ -308,12 +328,13 @@ void ProjectScreen::renderFileTree(const std::filesystem::path& path)
                 {
                     if (ImGui::MenuItem("New Scene..."))
                     {
-                        newSceneLocation = p;
-                        openNewSceneDialog();
+                        newSceneDialog.setLocation(p, projectPath);
+                        newSceneDialog.open();
                     }
                     if (ImGui::MenuItem("New Folder"))
                     {
-                        openNewFolderDialog(p);
+                        newFolderDialog.setParentPath(p);
+                        newFolderDialog.open();
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Delete"))
@@ -420,31 +441,6 @@ void ProjectScreen::renderScenesList()
     }
 }
 
-void ProjectScreen::openNewFolderDialog(const std::filesystem::path& parentPath)
-{
-    newFolderParentPath = parentPath;
-    std::memset(newFolderName, 0, sizeof(newFolderName));
-    std::strcpy(newFolderName, "New Folder");
-    showNewFolderPopup = true;
-    ImGui::OpenPopup("New Folder");
-}
-
-void ProjectScreen::createNewFolder()
-{
-    if (std::strlen(newFolderName) == 0) return;
-    
-    std::filesystem::path newPath = newFolderParentPath / newFolderName;
-    
-    try {
-        if (!std::filesystem::exists(newPath))
-        {
-            std::filesystem::create_directory(newPath);
-            selectedFilePath = newPath;
-        }
-    } catch (const std::filesystem::filesystem_error&) {
-    }
-}
-
 void ProjectScreen::deleteFileOrFolder(const std::filesystem::path& path)
 {
     bool isDirectory = std::filesystem::is_directory(path);
@@ -495,139 +491,6 @@ void ProjectScreen::deleteFileOrFolder(const std::filesystem::path& path)
     }
 }
 
-void ProjectScreen::renderNewFolderPopup()
-{
-    if (showNewFolderPopup)
-    {
-        ImGui::OpenPopup("New Folder");
-        showNewFolderPopup = false;
-    }
-    
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    
-    if (ImGui::BeginPopupModal("New Folder", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-    {
-        ImGui::Text("Create new folder in:");
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", newFolderParentPath.string().c_str());
-        ImGui::Spacing();
-        
-        ImGui::Text("Folder name:");
-        ImGui::SetNextItemWidth(300);
-        
-        bool enterPressed = ImGui::InputText("##FolderName", newFolderName, sizeof(newFolderName), 
-                                              ImGuiInputTextFlags_EnterReturnsTrue);
-        
-        if (ImGui::IsWindowAppearing())
-        {
-            ImGui::SetKeyboardFocusHere(-1);
-        }
-        
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        
-        if (ImGui::Button("Create", ImVec2(120, 0)) || enterPressed)
-        {
-            createNewFolder();
-            ImGui::CloseCurrentPopup();
-        }
-        
-        ImGui::SameLine();
-        
-        if (ImGui::Button("Cancel", ImVec2(120, 0)))
-        {
-            ImGui::CloseCurrentPopup();
-        }
-        
-        ImGui::EndPopup();
-    }
-}
-
-void ProjectScreen::openNewSceneDialog()
-{
-    std::memset(newSceneName, 0, sizeof(newSceneName));
-    std::strcpy(newSceneName, "new_scene");
-    newSceneWithGroundPlane = true;  // Default to scene with ground plane
-    
-    // Default location: project root or selected directory
-    if (!selectedFilePath.empty() && std::filesystem::is_directory(selectedFilePath))
-    {
-        newSceneLocation = selectedFilePath;
-    }
-    else
-    {
-        newSceneLocation = projectPath;
-    }
-    
-    showNewScenePopup = true;
-}
-
-// Helper to create a ground plane mesh node
-static void addGroundPlaneMesh(SceneNode* parent)
-{
-    SceneNode* groundPlane = parent->addChild("GroundPlane", PrimType::Mesh);
-    
-    // Create quad vertices for a 20x20 unit plane
-    groundPlane->meshData->vertices = {
-        glm::vec3(-10, 0, -10),
-        glm::vec3( 10, 0, -10),
-        glm::vec3( 10, 0,  10),
-        glm::vec3(-10, 0,  10)
-    };
-    
-    // Two triangles for the quad
-    groundPlane->meshData->indices = { 0, 1, 2, 0, 2, 3 };
-    groundPlane->meshData->displayColor = glm::vec3(0.5f, 0.5f, 0.5f);
-}
-
-void ProjectScreen::createNewScene()
-{
-    if (std::strlen(newSceneName) == 0) return;
-    
-    // Ensure .usda extension
-    std::string filename = newSceneName;
-    if (filename.find('.') == std::string::npos)
-    {
-        filename += ".usda";
-    }
-    
-    std::filesystem::path scenePath = newSceneLocation / filename;
-    
-    // Don't overwrite existing files
-    if (std::filesystem::exists(scenePath))
-    {
-        tinyfd_messageBox("Error", "A scene with this name already exists.", "ok", "error", 1);
-        return;
-    }
-    
-    // Create scene using the node-based structure (OpenUSD philosophy)
-    Scene newScene;
-    newScene.name = newSceneName;
-    newScene.defaultPrim = "World";
-    newScene.upAxis = "Y";
-    newScene.metersPerUnit = 1.0f;
-    
-    // Add ground plane if requested
-    if (newSceneWithGroundPlane)
-    {
-        addGroundPlaneMesh(newScene.root.get());
-    }
-    
-    // Save the scene to file
-    if (newScene.saveToFile(scenePath))
-    {
-        // Refresh scenes list and select the new scene
-        scanProjectScenes();
-        selectedScenePath = scenePath;
-        loadScene(scenePath);
-    }
-    else
-    {
-        tinyfd_messageBox("Error", "Failed to create scene file.", "ok", "error", 1);
-    }
-}
-
 void ProjectScreen::deleteScene(const std::filesystem::path& scenePath)
 {
     // Confirm deletion
@@ -657,143 +520,6 @@ void ProjectScreen::deleteScene(const std::filesystem::path& scenePath)
         } catch (const std::filesystem::filesystem_error&) {
             tinyfd_messageBox("Error", "Failed to delete scene file.", "ok", "error", 1);
         }
-    }
-}
-
-void ProjectScreen::renderNewScenePopup()
-{
-    if (showNewScenePopup)
-    {
-        ImGui::OpenPopup("Create New Scene");
-        showNewScenePopup = false;
-    }
-    
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(500, 290), ImGuiCond_Appearing);
-    
-    if (ImGui::BeginPopupModal("Create New Scene", nullptr, ImGuiWindowFlags_NoResize))
-    {
-        // Scene Name
-        ImGui::Text("Scene Name:");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputText("##SceneName", newSceneName, sizeof(newSceneName));
-        
-        if (ImGui::IsWindowAppearing())
-        {
-            ImGui::SetKeyboardFocusHere(-1);
-        }
-        
-        ImGui::Spacing();
-        
-        // Location
-        ImGui::Text("Location:");
-        
-        // Show relative path from project
-        std::string relativePath;
-        if (newSceneLocation == projectPath)
-        {
-            relativePath = projectPath.filename().string() + "/";
-        }
-        else
-        {
-            relativePath = std::filesystem::relative(newSceneLocation, projectPath.parent_path()).string() + "/";
-        }
-        
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
-        ImGui::InputText("##Location", &relativePath[0], relativePath.size(), ImGuiInputTextFlags_ReadOnly);
-        ImGui::SameLine();
-        
-        if (ImGui::Button("Browse...", ImVec2(75, 0)))
-        {
-            const char* path = tinyfd_selectFolderDialog("Select location", newSceneLocation.string().c_str());
-            if (path)
-            {
-                std::filesystem::path selectedPath(path);
-                // Ensure it's within the project
-                std::string pathStr = selectedPath.string();
-                std::string projectStr = projectPath.string();
-                if (pathStr.find(projectStr) == 0)
-                {
-                    newSceneLocation = selectedPath;
-                }
-                else
-                {
-                    tinyfd_messageBox("Error", "Please select a location within the project.", "ok", "error", 1);
-                }
-            }
-        }
-        
-        // Preview path
-        std::string previewFilename = newSceneName;
-        if (previewFilename.find('.') == std::string::npos)
-        {
-            previewFilename += ".usda";
-        }
-        std::string previewPath = (newSceneLocation / previewFilename).string();
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Creates: %s", previewPath.c_str());
-        
-        ImGui::Spacing();
-        
-        // Scene type selection
-        ImGui::Text("Scene Type:");
-        
-        if (ImGui::RadioButton("Empty Scene", !newSceneWithGroundPlane))
-        {
-            newSceneWithGroundPlane = false;
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("With Ground Plane", newSceneWithGroundPlane))
-        {
-            newSceneWithGroundPlane = true;
-        }
-        
-        // Info about the scene that will be created
-        if (newSceneWithGroundPlane)
-        {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Scene will include a ground plane mesh.");
-        }
-        else
-        {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Scene will be empty (no meshes).");
-        }
-        
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        
-        // Buttons
-        float buttonWidth = 120.0f;
-        float buttonsWidth = buttonWidth * 2 + ImGui::GetStyle().ItemSpacing.x;
-        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - buttonsWidth) / 2.0f);
-        
-        if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0)))
-        {
-            ImGui::CloseCurrentPopup();
-        }
-        
-        ImGui::SameLine();
-        
-        // Validate before enabling Create button
-        bool canCreate = std::strlen(newSceneName) > 0;
-        
-        if (!canCreate)
-        {
-            ImGui::BeginDisabled();
-        }
-        
-        if (ImGui::Button("Create Scene", ImVec2(buttonWidth, 0)))
-        {
-            createNewScene();
-            ImGui::CloseCurrentPopup();
-        }
-        
-        if (!canCreate)
-        {
-            ImGui::EndDisabled();
-        }
-        
-        ImGui::EndPopup();
     }
 }
 
@@ -850,6 +576,17 @@ void ProjectScreen::renderViewport()
         if (io.MouseWheel != 0)
             cam.zoom(io.MouseWheel);
         
+        // Keyboard movement (arrow keys)
+        const float moveSpeed = 0.5f;
+        if (ImGui::IsKeyDown(ImGuiKey_UpArrow))
+            cam.moveForward(moveSpeed);
+        if (ImGui::IsKeyDown(ImGuiKey_DownArrow))
+            cam.moveBackward(moveSpeed);
+        if (ImGui::IsKeyDown(ImGuiKey_LeftArrow))
+            cam.moveLeft(moveSpeed);
+        if (ImGui::IsKeyDown(ImGuiKey_RightArrow))
+            cam.moveRight(moveSpeed);
+        
         // Object picking (only when not dragging)
         if (!isDragging)
         {
@@ -880,6 +617,13 @@ void ProjectScreen::renderViewport()
                     selectedNode = hoveredObject;
                 }
             }
+            
+            // Right-click context menu
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            {
+                contextMenuNode = hoveredObject;  // Store hovered node for context menu
+                ImGui::OpenPopup("ViewportContextMenu");
+            }
         }
         else
         {
@@ -891,6 +635,67 @@ void ProjectScreen::renderViewport()
     {
         // Clear hover when not over viewport
         sceneRenderer.setHoveredNode(nullptr);
+    }
+    
+    // Viewport context menu
+    if (ImGui::BeginPopup("ViewportContextMenu"))
+    {
+        // Only show "New" menu when not clicking on an object
+        if (!contextMenuNode)
+        {
+            if (ImGui::BeginMenu("New"))
+            {
+                for (auto& tool : primitiveTools)
+                {
+                    if (ImGui::MenuItem(tool->getName()))
+                    {
+                        tool->onActivate(&currentScene);
+                    }
+                }
+                ImGui::EndMenu();
+            }
+        }
+        
+        // Delete option (only if right-clicked on an object)
+        if (contextMenuNode)
+        {
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete", nullptr, false, contextMenuNode != nullptr))
+            {
+                // Clear selection if deleting selected node
+                if (selectedNode == contextMenuNode)
+                {
+                    selectedNode = nullptr;
+                }
+                
+                // Remove from parent
+                if (contextMenuNode->parent)
+                {
+                    contextMenuNode->parent->removeChild(contextMenuNode);
+                }
+                
+                // Update renderer and save
+                sceneRenderer.setScene(&currentScene);
+                saveScene();
+                
+                contextMenuNode = nullptr;
+            }
+        }
+        
+        ImGui::EndPopup();
+    }
+    
+    // Render tool popups/logic
+    for (auto& tool : primitiveTools)
+    {
+        SceneNode* newNode = tool->render();
+        if (newNode)
+        {
+            // Node was created
+            sceneRenderer.setScene(&currentScene);
+            saveScene();
+            selectedNode = newNode;
+        }
     }
     
     // Camera control buttons overlay (top-right)
@@ -998,19 +803,6 @@ void ProjectScreen::renderPropertiesPanel()
     if (!selectedNode)
     {
         ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Scene Properties");
-    }
-    
-    // Save button (show when there are unsaved changes)
-    if (sceneModified)
-    {
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 50);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-        if (ImGui::Button("Save"))
-        {
-            saveScene();
-        }
-        ImGui::PopStyleColor(2);
     }
     
     ImGui::Separator();
@@ -1145,8 +937,28 @@ void ProjectScreen::renderNodeProperties(SceneNode* node)
             color.b = colorArr[2];
             // Update the GPU mesh
             sceneRenderer.setScene(&currentScene);
-            // Mark scene as having unsaved changes
-            sceneModified = true;
+            // Auto-save changes
+            saveScene();
+        }
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        // Physics properties section
+        ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Physics");
+        ImGui::Separator();
+        
+        // Single collision checkbox
+        bool collision = node->meshData->collision;
+        if (ImGui::Checkbox("Collision", &collision))
+        {
+            node->meshData->collision = collision;
+            saveScene();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Applies PhysicsCollisionAPI schema");
         }
     }
     
@@ -1191,7 +1003,6 @@ void ProjectScreen::loadScene(const std::filesystem::path& scenePath)
 {
     // Clear selection when loading a new scene
     selectedNode = nullptr;
-    sceneModified = false;
     
     // Load the scene and pass to renderer
     if (currentScene.loadFromFile(scenePath))
@@ -1208,9 +1019,7 @@ void ProjectScreen::saveScene()
 {
     if (!selectedScenePath.empty())
     {
-        if (currentScene.saveToFile(selectedScenePath))
-        {
-            sceneModified = false;
-        }
+        currentScene.saveToFile(selectedScenePath);
     }
 }
+

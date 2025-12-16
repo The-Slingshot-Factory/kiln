@@ -47,6 +47,9 @@ struct MeshData
     std::vector<glm::vec3> vertices;
     std::vector<unsigned int> indices;
     glm::vec3 displayColor = glm::vec3(0.5f);  // Default gray
+    
+    // Physics collision (UsdPhysicsCollisionAPI)
+    bool collision = false;  // When true, applies PhysicsCollisionAPI with collisionEnabled=true
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -73,6 +76,7 @@ public:
     // Hierarchy operations
     SceneNode* addChild(const std::string& name, PrimType type = PrimType::Xform);
     SceneNode* findChild(const std::string& name) const;
+    bool removeChild(SceneNode* child);
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

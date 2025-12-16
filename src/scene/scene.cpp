@@ -38,6 +38,19 @@ SceneNode* SceneNode::findChild(const std::string& childName) const
     return nullptr;
 }
 
+bool SceneNode::removeChild(SceneNode* child)
+{
+    for (auto it = children.begin(); it != children.end(); ++it)
+    {
+        if (it->get() == child)
+        {
+            children.erase(it);
+            return true;
+        }
+    }
+    return false;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Scene Implementation
 // ═══════════════════════════════════════════════════════════════════════════
@@ -171,13 +184,18 @@ bool Scene::parseUSDA(const std::string& content)
     }
     
     // Find root-level def blocks and parse recursively
-    std::regex defRegex(R"(def\s+(\w+)\s+\"(\w+)\"\s*\{)");
+    // Regex to capture def with optional metadata section: def Type "Name" (metadata) { or def Type "Name" {
+    std::regex defRegex(R"(def\s+(\w+)\s+\"(\w+)\"\s*(?:\([^)]*\))?\s*\{)");
     
     std::string::const_iterator searchStart(content.cbegin());
     while (std::regex_search(searchStart, content.cend(), match, defRegex))
     {
         std::string primType = match[1].str();
         std::string primName = match[2].str();
+        
+        // Get the full match to check for apiSchemas in metadata
+        std::string fullMatch = match[0].str();
+        bool hasPhysicsCollisionAPI = (fullMatch.find("PhysicsCollisionAPI") != std::string::npos);
         
         size_t startPos = match.position() + (searchStart - content.cbegin());
         size_t bracePos = content.find('{', startPos);
@@ -209,6 +227,11 @@ bool Scene::parseUSDA(const std::string& content)
                 if (type == PrimType::Mesh)
                 {
                     parseMeshData(blockContent, *node->meshData);
+                    // Also check metadata for PhysicsCollisionAPI
+                    if (hasPhysicsCollisionAPI)
+                    {
+                        node->meshData->collision = true;
+                    }
                 }
                 
                 parseNode(blockContent, node, 1);
@@ -230,7 +253,8 @@ void Scene::parseNode(const std::string& content, SceneNode* parent, int depth)
 {
     if (depth > 10) return;  // Prevent infinite recursion
     
-    std::regex defRegex(R"(def\s+(\w+)\s+\"(\w+)\"\s*\{)");
+    // Regex to capture def with optional metadata section: def Type "Name" (metadata) { or def Type "Name" {
+    std::regex defRegex(R"(def\s+(\w+)\s+\"(\w+)\"\s*(?:\([^)]*\))?\s*\{)");
     
     std::string::const_iterator searchStart(content.cbegin());
     std::smatch match;
@@ -239,6 +263,10 @@ void Scene::parseNode(const std::string& content, SceneNode* parent, int depth)
     {
         std::string primType = match[1].str();
         std::string primName = match[2].str();
+        
+        // Get the full match to check for apiSchemas in metadata
+        std::string fullMatch = match[0].str();
+        bool hasPhysicsCollisionAPI = (fullMatch.find("PhysicsCollisionAPI") != std::string::npos);
         
         size_t matchStart = match.position() + (searchStart - content.cbegin());
         size_t bracePos = content.find('{', matchStart);
@@ -263,6 +291,11 @@ void Scene::parseNode(const std::string& content, SceneNode* parent, int depth)
             if (type == PrimType::Mesh)
             {
                 parseMeshData(blockContent, *child->meshData);
+                // Also check metadata for PhysicsCollisionAPI
+                if (hasPhysicsCollisionAPI)
+                {
+                    child->meshData->collision = true;
+                }
             }
             
             parseNode(blockContent, child, depth + 1);
@@ -370,6 +403,14 @@ bool Scene::parseMeshData(const std::string& content, MeshData& meshData)
         meshData.displayColor.b = std::stof(match[3].str());
     }
     
+    // Parse physics:collisionEnabled (presence indicates PhysicsCollisionAPI is applied)
+    std::regex collisionRegex(R"(bool\s+physics:collisionEnabled\s*=\s*(true|false|1|0))");
+    if (std::regex_search(content, match, collisionRegex))
+    {
+        std::string value = match[1].str();
+        meshData.collision = (value == "true" || value == "1");
+    }
+    
     return !meshData.vertices.empty();
 }
 
@@ -415,7 +456,18 @@ void Scene::generateNodeUSDA(const SceneNode* node, std::string& output, int ind
 {
     std::string indentStr(indent * 4, ' ');
     
-    output += indentStr + "def " + primTypeToString(node->type) + " \"" + node->name + "\"\n";
+    // Check if this mesh has PhysicsCollisionAPI
+    bool hasCollision = (node->type == PrimType::Mesh && node->meshData && node->meshData->collision);
+    
+    output += indentStr + "def " + primTypeToString(node->type) + " \"" + node->name + "\"";
+    
+    if (hasCollision)
+    {
+        output += " (\n";
+        output += indentStr + "    prepend apiSchemas = [\"PhysicsCollisionAPI\"]\n";
+        output += indentStr + ")";
+    }
+    output += "\n";
     output += indentStr + "{\n";
     
     if (node->type == PrimType::Mesh && node->meshData && !node->meshData->vertices.empty())
@@ -465,6 +517,12 @@ void Scene::generateNodeUSDA(const SceneNode* node, std::string& output, int ind
                   std::to_string(mesh.displayColor.r) + ", " +
                   std::to_string(mesh.displayColor.g) + ", " +
                   std::to_string(mesh.displayColor.b) + ")]\n";
+        
+        // Write physics collision property if collision is enabled
+        if (mesh.collision)
+        {
+            output += innerIndent + "bool physics:collisionEnabled = true\n";
+        }
     }
     
     for (const auto& child : node->children)

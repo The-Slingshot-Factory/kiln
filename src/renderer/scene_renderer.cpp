@@ -576,58 +576,41 @@ void SceneRenderer::createShaders()
 
 void SceneRenderer::createGridMesh()
 {
-    // Create grid lines on XZ plane
-    const int gridSize = 10;       // -10 to +10
-    const float gridSpacing = 1.0f;
-    const glm::vec3 gridColor(0.3f, 0.3f, 0.35f);
+    // Create grid lines on XZ plane - large expansive grid
+    const float gridExtent = 500.0f;   // Grid extends -500 to +500 units
+    const float majorSpacing = 10.0f;  // Major grid lines every 10 units
+    const float minorSpacing = 1.0f;   // Minor grid lines every 1 unit (only near center)
+    const float minorExtent = 50.0f;   // Minor lines only within ±50 units of center
+    
+    const glm::vec3 majorColor(0.25f, 0.25f, 0.3f);
+    const glm::vec3 minorColor(0.2f, 0.2f, 0.22f);
     const glm::vec3 centerLineColor(0.4f, 0.4f, 0.45f);
     
     std::vector<float> vertices;
     
-    // Lines along X axis (parallel to X)
-    for (int i = -gridSize; i <= gridSize; ++i)
+    auto addLine = [&](float x1, float z1, float x2, float z2, const glm::vec3& color) {
+        vertices.push_back(x1); vertices.push_back(0.0f); vertices.push_back(z1);
+        vertices.push_back(color.r); vertices.push_back(color.g); vertices.push_back(color.b);
+        vertices.push_back(x2); vertices.push_back(0.0f); vertices.push_back(z2);
+        vertices.push_back(color.r); vertices.push_back(color.g); vertices.push_back(color.b);
+    };
+    
+    // Major grid lines (every 10 units across entire grid)
+    for (float i = -gridExtent; i <= gridExtent; i += majorSpacing)
     {
-        float z = i * gridSpacing;
-        glm::vec3 color = (i == 0) ? centerLineColor : gridColor;
-        
-        // Start point
-        vertices.push_back(-gridSize * gridSpacing);
-        vertices.push_back(0.0f);
-        vertices.push_back(z);
-        vertices.push_back(color.r);
-        vertices.push_back(color.g);
-        vertices.push_back(color.b);
-        
-        // End point
-        vertices.push_back(gridSize * gridSpacing);
-        vertices.push_back(0.0f);
-        vertices.push_back(z);
-        vertices.push_back(color.r);
-        vertices.push_back(color.g);
-        vertices.push_back(color.b);
+        glm::vec3 color = (i == 0.0f) ? centerLineColor : majorColor;
+        addLine(-gridExtent, i, gridExtent, i, color);  // Lines along X
+        addLine(i, -gridExtent, i, gridExtent, color);  // Lines along Z
     }
     
-    // Lines along Z axis (parallel to Z)
-    for (int i = -gridSize; i <= gridSize; ++i)
+    // Minor grid lines (every 1 unit, only near center for detail)
+    for (float i = -minorExtent; i <= minorExtent; i += minorSpacing)
     {
-        float x = i * gridSpacing;
-        glm::vec3 color = (i == 0) ? centerLineColor : gridColor;
+        // Skip if this would overlap with a major line
+        if (fmod(std::abs(i), majorSpacing) < 0.001f) continue;
         
-        // Start point
-        vertices.push_back(x);
-        vertices.push_back(0.0f);
-        vertices.push_back(-gridSize * gridSpacing);
-        vertices.push_back(color.r);
-        vertices.push_back(color.g);
-        vertices.push_back(color.b);
-        
-        // End point
-        vertices.push_back(x);
-        vertices.push_back(0.0f);
-        vertices.push_back(gridSize * gridSpacing);
-        vertices.push_back(color.r);
-        vertices.push_back(color.g);
-        vertices.push_back(color.b);
+        addLine(-minorExtent, i, minorExtent, i, minorColor);  // Lines along X
+        addLine(i, -minorExtent, i, minorExtent, minorColor);  // Lines along Z
     }
     
     gridVertexCount = static_cast<int>(vertices.size() / 6);

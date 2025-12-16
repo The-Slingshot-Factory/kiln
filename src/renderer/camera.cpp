@@ -61,4 +61,32 @@ void Camera::zoom(float delta)
     distance = std::clamp(distance, 1.0f, 100.0f);
 }
 
+void Camera::moveForward(float speed)
+{
+    glm::vec3 forward = -glm::normalize(getPosition() - target);
+    forward.y = 0.0f;  // Keep movement on horizontal plane
+    forward = glm::normalize(forward);
+    target += forward * speed * distance * 0.03f;
+}
+
+void Camera::moveBackward(float speed)
+{
+    glm::vec3 forward = -glm::normalize(getPosition() - target);
+    forward.y = 0.0f;  // Keep movement on horizontal plane
+    forward = glm::normalize(forward);
+    target -= forward * speed * distance * 0.03f;
+}
+
+void Camera::moveLeft(float speed)
+{
+    glm::vec3 right = getRight();
+    target -= right * speed * distance * 0.03f;
+}
+
+void Camera::moveRight(float speed)
+{
+    glm::vec3 right = getRight();
+    target += right * speed * distance * 0.03f;
+}
+
 
