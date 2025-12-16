@@ -1,9 +1,15 @@
 #include "project_screen.h"
 #include "welcome_screen.h"
+#include "../scene/scene.h"
 #include "imgui.h"
+#include "tinyfiledialogs.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
+#include <fstream>
+#include <functional>
+#include <iterator>
 
 // Scene file extensions (OpenUSD formats)
 static const std::vector<std::string> SCENE_EXTENSIONS = {".usda", ".usdc", ".usd", ".usdz"};
@@ -21,6 +27,13 @@ ProjectScreen::ProjectScreen(std::filesystem::path& path)
 void ProjectScreen::onEnter()
 {
     scanProjectScenes();
+    // Renderer will be initialized on first frame when viewport size is known
+}
+
+void ProjectScreen::onExit()
+{
+    sceneRenderer.cleanup();
+    rendererInitialized = false;
 }
 
 void ProjectScreen::scanProjectScenes()
@@ -57,9 +70,8 @@ void ProjectScreen::scanDirectory(const std::filesystem::path& dir)
                 if (!ext.empty() && isSceneFile(ext))
                 {
                     SceneInfo info;
-                    info.name = entry.path().filename().string();
+                    info.name = entry.path().stem().string();  // Name without extension
                     info.path = entry.path();
-                    info.extension = ext;
                     scenes.push_back(info);
                 }
             }
@@ -92,6 +104,10 @@ void ProjectScreen::update()
         {
             if (ImGui::BeginMenu("New"))
             {
+                if (ImGui::MenuItem("Scene..."))
+                {
+                    openNewSceneDialog();
+                }
                 if (ImGui::MenuItem("Folder"))
                 {
                     std::filesystem::path parentPath = projectPath;
@@ -141,6 +157,11 @@ void ProjectScreen::update()
         
         if (ImGui::BeginPopupContextItem())
         {
+            if (ImGui::MenuItem("New Scene..."))
+            {
+                newSceneLocation = projectPath;
+                openNewSceneDialog();
+            }
             if (ImGui::MenuItem("New Folder"))
             {
                 openNewFolderDialog(projectPath);
@@ -200,31 +221,48 @@ void ProjectScreen::update()
     ImGui::SameLine();
     
     // ═══════════════════════════════════════════════
-    // Right Panel: Main Viewport / Editor Area
+    // Center: 3D Viewport
     // ═══════════════════════════════════════════════
-    ImGui::BeginChild("Viewport", ImVec2(0, 0), true);
+    float availWidth = ImGui::GetContentRegionAvail().x;
+    float viewportWidth = availWidth - propertiesPanelWidth - 8.0f;  // 8 for splitter
     
-    if (!selectedFilePath.empty())
-    {
-        ImGui::Text("Selected File:");
-        ImGui::TextWrapped("%s", selectedFilePath.string().c_str());
-        ImGui::Spacing();
-    }
-    
-    if (!selectedScenePath.empty())
-    {
-        ImGui::Text("Selected Scene:");
-        ImGui::TextWrapped("%s", selectedScenePath.string().c_str());
-    }
-    
-    if (selectedFilePath.empty() && selectedScenePath.empty())
-    {
-        ImGui::TextDisabled("Select a file or scene to view details");
-    }
-    
+    ImGui::BeginChild("ViewportRegion", ImVec2(viewportWidth, 0), false);
+    renderViewport();
     ImGui::EndChild();
+    
+    ImGui::SameLine();
+    
+    // Splitter between viewport and properties
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+    
+    ImGui::Button("##PropertiesSplitter", ImVec2(4.0f, -1));
+    
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    }
+    
+    if (ImGui::IsItemActive())
+    {
+        float delta = ImGui::GetIO().MouseDelta.x;
+        propertiesPanelWidth -= delta;
+        propertiesPanelWidth = std::clamp(propertiesPanelWidth, 200.0f, 500.0f);
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    }
+    
+    ImGui::PopStyleColor(3);
+    
+    ImGui::SameLine();
+    
+    // ═══════════════════════════════════════════════
+    // Right Panel: Properties
+    // ═══════════════════════════════════════════════
+    renderPropertiesPanel();
 
     renderNewFolderPopup();
+    renderNewScenePopup();
 
     ImGui::End();
 }
@@ -268,9 +306,19 @@ void ProjectScreen::renderFileTree(const std::filesystem::path& path)
                 
                 if (ImGui::BeginPopupContextItem())
                 {
+                    if (ImGui::MenuItem("New Scene..."))
+                    {
+                        newSceneLocation = p;
+                        openNewSceneDialog();
+                    }
                     if (ImGui::MenuItem("New Folder"))
                     {
                         openNewFolderDialog(p);
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Delete"))
+                    {
+                        deleteFileOrFolder(p);
                     }
                     ImGui::EndPopup();
                 }
@@ -287,7 +335,9 @@ void ProjectScreen::renderFileTree(const std::filesystem::path& path)
                                          | ImGuiTreeNodeFlags_NoTreePushOnOpen
                                          | ImGuiTreeNodeFlags_SpanAvailWidth;
                 
-                if (selectedFilePath == p)
+                // Highlight scene files and selected files
+                bool isScene = isSceneFile(p.extension().string());
+                if (selectedFilePath == p || (isScene && selectedScenePath == p))
                     flags |= ImGuiTreeNodeFlags_Selected;
                 
                 ImGui::TreeNodeEx(name.c_str(), flags);
@@ -295,6 +345,23 @@ void ProjectScreen::renderFileTree(const std::filesystem::path& path)
                 if (ImGui::IsItemClicked())
                 {
                     selectedFilePath = p;
+                    
+                    // If it's a scene file, also load and view it
+                    if (isScene)
+                    {
+                        selectedScenePath = p;
+                        loadScene(p);
+                    }
+                }
+                
+                // Context menu for files
+                if (ImGui::BeginPopupContextItem())
+                {
+                    if (ImGui::MenuItem("Delete"))
+                    {
+                        deleteFileOrFolder(p);
+                    }
+                    ImGui::EndPopup();
                 }
                 
                 if (ImGui::IsItemHovered())
@@ -318,24 +385,38 @@ void ProjectScreen::renderScenesList()
         return;
     }
     
-    for (const auto& scene : scenes)
+    for (size_t i = 0; i < scenes.size(); ++i)
     {
+        const auto& scene = scenes[i];
         bool selected = (selectedScenePath == scene.path);
         
-        ImGui::TextDisabled("%s", scene.extension.c_str());
-        ImGui::SameLine();
+        ImGui::PushID(static_cast<int>(i));
+        
+        // Draw scene icon
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        float r = 5.0f;
+        ImVec2 center(pos.x + r + 2, pos.y + ImGui::GetTextLineHeight() * 0.5f);
+        drawList->AddCircleFilled(center, r, IM_COL32(100, 180, 100, 255));
+        
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + r * 2 + 8);
         
         if (ImGui::Selectable(scene.name.c_str(), selected))
         {
             selectedScenePath = scene.path;
+            loadScene(scene.path);
         }
         
-        if (ImGui::IsItemHovered())
+        if (ImGui::BeginPopupContextItem())
         {
-            ImGui::BeginTooltip();
-            ImGui::Text("%s", scene.path.string().c_str());
-            ImGui::EndTooltip();
+            if (ImGui::MenuItem("Delete"))
+            {
+                deleteScene(scene.path);
+            }
+            ImGui::EndPopup();
         }
+        
+        ImGui::PopID();
     }
 }
 
@@ -361,6 +442,56 @@ void ProjectScreen::createNewFolder()
             selectedFilePath = newPath;
         }
     } catch (const std::filesystem::filesystem_error&) {
+    }
+}
+
+void ProjectScreen::deleteFileOrFolder(const std::filesystem::path& path)
+{
+    bool isDirectory = std::filesystem::is_directory(path);
+    std::string itemType = isDirectory ? "folder" : "file";
+    std::string message = "Are you sure you want to delete this " + itemType + "?\n" + path.filename().string();
+    
+    if (isDirectory)
+    {
+        message += "\n\nThis will delete all contents inside.";
+    }
+    
+    int result = tinyfd_messageBox("Delete", message.c_str(), "yesno", "warning", 0);
+    
+    if (result == 1)  // User clicked Yes
+    {
+        try {
+            // Check if it's a scene file that's currently selected
+            bool isScene = isSceneFile(path.extension().string());
+            if (isScene && selectedScenePath == path)
+            {
+                selectedScenePath.clear();
+                selectedNode = nullptr;
+                sceneRenderer.clearScene();
+            }
+            
+            // Clear file selection if this was selected
+            if (selectedFilePath == path)
+            {
+                selectedFilePath.clear();
+            }
+            
+            // Delete file or folder (recursively for folders)
+            if (isDirectory)
+            {
+                std::filesystem::remove_all(path);
+            }
+            else
+            {
+                std::filesystem::remove(path);
+            }
+            
+            // Refresh scenes list in case a scene was deleted
+            scanProjectScenes();
+            
+        } catch (const std::filesystem::filesystem_error&) {
+            tinyfd_messageBox("Error", "Failed to delete.", "ok", "error", 1);
+        }
     }
 }
 
@@ -410,5 +541,676 @@ void ProjectScreen::renderNewFolderPopup()
         }
         
         ImGui::EndPopup();
+    }
+}
+
+void ProjectScreen::openNewSceneDialog()
+{
+    std::memset(newSceneName, 0, sizeof(newSceneName));
+    std::strcpy(newSceneName, "new_scene");
+    newSceneWithGroundPlane = true;  // Default to scene with ground plane
+    
+    // Default location: project root or selected directory
+    if (!selectedFilePath.empty() && std::filesystem::is_directory(selectedFilePath))
+    {
+        newSceneLocation = selectedFilePath;
+    }
+    else
+    {
+        newSceneLocation = projectPath;
+    }
+    
+    showNewScenePopup = true;
+}
+
+// Helper to create a ground plane mesh node
+static void addGroundPlaneMesh(SceneNode* parent)
+{
+    SceneNode* groundPlane = parent->addChild("GroundPlane", PrimType::Mesh);
+    
+    // Create quad vertices for a 20x20 unit plane
+    groundPlane->meshData->vertices = {
+        glm::vec3(-10, 0, -10),
+        glm::vec3( 10, 0, -10),
+        glm::vec3( 10, 0,  10),
+        glm::vec3(-10, 0,  10)
+    };
+    
+    // Two triangles for the quad
+    groundPlane->meshData->indices = { 0, 1, 2, 0, 2, 3 };
+    groundPlane->meshData->displayColor = glm::vec3(0.5f, 0.5f, 0.5f);
+}
+
+void ProjectScreen::createNewScene()
+{
+    if (std::strlen(newSceneName) == 0) return;
+    
+    // Ensure .usda extension
+    std::string filename = newSceneName;
+    if (filename.find('.') == std::string::npos)
+    {
+        filename += ".usda";
+    }
+    
+    std::filesystem::path scenePath = newSceneLocation / filename;
+    
+    // Don't overwrite existing files
+    if (std::filesystem::exists(scenePath))
+    {
+        tinyfd_messageBox("Error", "A scene with this name already exists.", "ok", "error", 1);
+        return;
+    }
+    
+    // Create scene using the node-based structure (OpenUSD philosophy)
+    Scene newScene;
+    newScene.name = newSceneName;
+    newScene.defaultPrim = "World";
+    newScene.upAxis = "Y";
+    newScene.metersPerUnit = 1.0f;
+    
+    // Add ground plane if requested
+    if (newSceneWithGroundPlane)
+    {
+        addGroundPlaneMesh(newScene.root.get());
+    }
+    
+    // Save the scene to file
+    if (newScene.saveToFile(scenePath))
+    {
+        // Refresh scenes list and select the new scene
+        scanProjectScenes();
+        selectedScenePath = scenePath;
+        loadScene(scenePath);
+    }
+    else
+    {
+        tinyfd_messageBox("Error", "Failed to create scene file.", "ok", "error", 1);
+    }
+}
+
+void ProjectScreen::deleteScene(const std::filesystem::path& scenePath)
+{
+    // Confirm deletion
+    std::string message = "Are you sure you want to delete:\n" + scenePath.filename().string() + "?";
+    int result = tinyfd_messageBox("Delete Scene", message.c_str(), "yesno", "warning", 0);
+    
+    if (result == 1)  // User clicked Yes
+    {
+        try {
+            if (std::filesystem::remove(scenePath))
+            {
+                // If the deleted scene was selected, clear selection
+                if (selectedScenePath == scenePath)
+                {
+                    selectedScenePath.clear();
+                    selectedNode = nullptr;
+                    sceneRenderer.clearScene();
+                }
+                if (selectedFilePath == scenePath)
+                {
+                    selectedFilePath.clear();
+                }
+                
+                // Refresh the scenes list
+                scanProjectScenes();
+            }
+        } catch (const std::filesystem::filesystem_error&) {
+            tinyfd_messageBox("Error", "Failed to delete scene file.", "ok", "error", 1);
+        }
+    }
+}
+
+void ProjectScreen::renderNewScenePopup()
+{
+    if (showNewScenePopup)
+    {
+        ImGui::OpenPopup("Create New Scene");
+        showNewScenePopup = false;
+    }
+    
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(500, 290), ImGuiCond_Appearing);
+    
+    if (ImGui::BeginPopupModal("Create New Scene", nullptr, ImGuiWindowFlags_NoResize))
+    {
+        // Scene Name
+        ImGui::Text("Scene Name:");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##SceneName", newSceneName, sizeof(newSceneName));
+        
+        if (ImGui::IsWindowAppearing())
+        {
+            ImGui::SetKeyboardFocusHere(-1);
+        }
+        
+        ImGui::Spacing();
+        
+        // Location
+        ImGui::Text("Location:");
+        
+        // Show relative path from project
+        std::string relativePath;
+        if (newSceneLocation == projectPath)
+        {
+            relativePath = projectPath.filename().string() + "/";
+        }
+        else
+        {
+            relativePath = std::filesystem::relative(newSceneLocation, projectPath.parent_path()).string() + "/";
+        }
+        
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
+        ImGui::InputText("##Location", &relativePath[0], relativePath.size(), ImGuiInputTextFlags_ReadOnly);
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Browse...", ImVec2(75, 0)))
+        {
+            const char* path = tinyfd_selectFolderDialog("Select location", newSceneLocation.string().c_str());
+            if (path)
+            {
+                std::filesystem::path selectedPath(path);
+                // Ensure it's within the project
+                std::string pathStr = selectedPath.string();
+                std::string projectStr = projectPath.string();
+                if (pathStr.find(projectStr) == 0)
+                {
+                    newSceneLocation = selectedPath;
+                }
+                else
+                {
+                    tinyfd_messageBox("Error", "Please select a location within the project.", "ok", "error", 1);
+                }
+            }
+        }
+        
+        // Preview path
+        std::string previewFilename = newSceneName;
+        if (previewFilename.find('.') == std::string::npos)
+        {
+            previewFilename += ".usda";
+        }
+        std::string previewPath = (newSceneLocation / previewFilename).string();
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Creates: %s", previewPath.c_str());
+        
+        ImGui::Spacing();
+        
+        // Scene type selection
+        ImGui::Text("Scene Type:");
+        
+        if (ImGui::RadioButton("Empty Scene", !newSceneWithGroundPlane))
+        {
+            newSceneWithGroundPlane = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("With Ground Plane", newSceneWithGroundPlane))
+        {
+            newSceneWithGroundPlane = true;
+        }
+        
+        // Info about the scene that will be created
+        if (newSceneWithGroundPlane)
+        {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Scene will include a ground plane mesh.");
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Scene will be empty (no meshes).");
+        }
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        // Buttons
+        float buttonWidth = 120.0f;
+        float buttonsWidth = buttonWidth * 2 + ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - buttonsWidth) / 2.0f);
+        
+        if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0)))
+        {
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::SameLine();
+        
+        // Validate before enabling Create button
+        bool canCreate = std::strlen(newSceneName) > 0;
+        
+        if (!canCreate)
+        {
+            ImGui::BeginDisabled();
+        }
+        
+        if (ImGui::Button("Create Scene", ImVec2(buttonWidth, 0)))
+        {
+            createNewScene();
+            ImGui::CloseCurrentPopup();
+        }
+        
+        if (!canCreate)
+        {
+            ImGui::EndDisabled();
+        }
+        
+        ImGui::EndPopup();
+    }
+}
+
+void ProjectScreen::renderViewport()
+{
+    ImGui::BeginChild("Viewport", ImVec2(0, 0), true, ImGuiWindowFlags_NoScrollbar);
+    
+    if (selectedScenePath.empty())
+    {
+        ImVec2 size = ImGui::GetContentRegionAvail();
+        ImVec2 textSize = ImGui::CalcTextSize("Select a scene to view");
+        ImGui::SetCursorPos(ImVec2((size.x - textSize.x) * 0.5f, (size.y - textSize.y) * 0.5f));
+        ImGui::TextDisabled("Select a scene to view");
+        ImGui::EndChild();
+        return;
+    }
+    
+    ImVec2 size = ImGui::GetContentRegionAvail();
+    int w = std::max(1, static_cast<int>(size.x));
+    int h = std::max(1, static_cast<int>(size.y));
+    
+    if (!rendererInitialized)
+    {
+        sceneRenderer.init(w, h);
+        rendererInitialized = true;
+    }
+    else if (w != static_cast<int>(lastViewportWidth) || h != static_cast<int>(lastViewportHeight))
+    {
+        sceneRenderer.resize(w, h);
+    }
+    lastViewportWidth = size.x;
+    lastViewportHeight = size.y;
+    
+    sceneRenderer.render();
+    
+    ImVec2 imagePos = ImGui::GetCursorScreenPos();
+    ImGui::Image((ImTextureID)(intptr_t)sceneRenderer.getTextureID(), size, ImVec2(0, 1), ImVec2(1, 0));
+    
+    // Handle viewport interaction
+    if (ImGui::IsItemHovered())
+    {
+        Camera& cam = sceneRenderer.getCamera();
+        ImGuiIO& io = ImGui::GetIO();
+        
+        // Camera controls (dragging)
+        bool isDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left) || 
+                          ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
+                          ImGui::IsMouseDragging(ImGuiMouseButton_Right);
+        
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+            cam.orbit(io.MouseDelta.x, io.MouseDelta.y);
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || ImGui::IsMouseDragging(ImGuiMouseButton_Right))
+            cam.pan(io.MouseDelta.x, io.MouseDelta.y);
+        if (io.MouseWheel != 0)
+            cam.zoom(io.MouseWheel);
+        
+        // Object picking (only when not dragging)
+        if (!isDragging)
+        {
+            // Calculate mouse position relative to viewport image
+            float mouseX = io.MousePos.x - imagePos.x;
+            float mouseY = io.MousePos.y - imagePos.y;
+            
+            // Pick object under cursor
+            SceneNode* hoveredObject = sceneRenderer.pickObject(mouseX, mouseY);
+            sceneRenderer.setHoveredNode(hoveredObject);
+            
+            // Show tooltip for hovered object
+            if (hoveredObject)
+            {
+                ImGui::BeginTooltip();
+                ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.3f, 1.0f), "%s", hoveredObject->name.c_str());
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Type: %s", primTypeToString(hoveredObject->type));
+                if (hoveredObject->type == PrimType::Mesh && hoveredObject->meshData)
+                {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Vertices: %zu", hoveredObject->meshData->vertices.size());
+                }
+                ImGui::TextColored(ImVec4(0.5f, 0.7f, 0.9f, 1.0f), "Click to select");
+                ImGui::EndTooltip();
+                
+                // Click to select
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                {
+                    selectedNode = hoveredObject;
+                }
+            }
+        }
+        else
+        {
+            // Clear hover when dragging camera
+            sceneRenderer.setHoveredNode(nullptr);
+        }
+    }
+    else
+    {
+        // Clear hover when not over viewport
+        sceneRenderer.setHoveredNode(nullptr);
+    }
+    
+    // Camera control buttons overlay (top-right)
+    renderCameraControls();
+    
+    ImGui::EndChild();
+}
+
+void ProjectScreen::renderCameraControls()
+{
+    ImGuiWindowFlags overlayFlags = ImGuiWindowFlags_NoDecoration 
+                                   | ImGuiWindowFlags_AlwaysAutoResize 
+                                   | ImGuiWindowFlags_NoSavedSettings 
+                                   | ImGuiWindowFlags_NoFocusOnAppearing 
+                                   | ImGuiWindowFlags_NoNav
+                                   | ImGuiWindowFlags_NoMove;
+    
+    // Position at top-right of the viewport child window
+    ImVec2 windowPos = ImGui::GetWindowPos();
+    ImVec2 windowSize = ImGui::GetWindowSize();
+    float padding = 10.0f;
+    
+    ImGui::SetNextWindowPos(ImVec2(windowPos.x + windowSize.x - padding, windowPos.y + 35.0f), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.7f);
+    
+    if (ImGui::Begin("##CameraControls", nullptr, overlayFlags))
+    {
+        Camera& cam = sceneRenderer.getCamera();
+        
+        // Reset button
+        if (ImGui::Button("Reset"))
+        {
+            cam.reset();
+        }
+        
+        ImGui::SameLine();
+        
+        // Zoom buttons
+        if (ImGui::Button("-"))
+        {
+            cam.zoom(-2.0f);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("+"))
+        {
+            cam.zoom(2.0f);
+        }
+        
+        ImGui::SameLine();
+        ImGui::Spacing();
+        ImGui::SameLine();
+        
+        // View presets for planes
+        if (ImGui::Button("XY"))
+        {
+            cam.reset();
+            cam.orbit(150, -100);  // yaw=0, pitch=0 - View XY plane (looking along Z)
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("XZ"))
+        {
+            cam.reset();
+            cam.orbit(150, 197);  // yaw=0, pitch=89 - View XZ plane (top-down)
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("YZ"))
+        {
+            cam.reset();
+            cam.orbit(-150, -100);  // yaw=90, pitch=0 - View YZ plane (looking along X)
+        }
+    }
+    ImGui::End();
+}
+
+void ProjectScreen::renderPropertiesPanel()
+{
+    ImGui::BeginChild("PropertiesPanel", ImVec2(0, 0), true);
+    
+    if (selectedScenePath.empty())
+    {
+        ImGui::TextDisabled("No scene loaded");
+        ImGui::EndChild();
+        return;
+    }
+    
+    // Header with back button if a node is selected
+    if (selectedNode)
+    {
+        // Store name before potentially clearing the pointer
+        std::string nodeName = selectedNode->name;
+        
+        if (ImGui::Button("<< Scene"))
+        {
+            selectedNode = nullptr;
+        }
+        
+        // Only show the name if we still have a selected node
+        if (selectedNode)
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Object: %s", nodeName.c_str());
+        }
+    }
+    
+    if (!selectedNode)
+    {
+        ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Scene Properties");
+    }
+    
+    // Save button (show when there are unsaved changes)
+    if (sceneModified)
+    {
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 50);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+        if (ImGui::Button("Save"))
+        {
+            saveScene();
+        }
+        ImGui::PopStyleColor(2);
+    }
+    
+    ImGui::Separator();
+    ImGui::Spacing();
+    
+    // Show appropriate properties
+    if (selectedNode)
+    {
+        renderNodeProperties(selectedNode);
+    }
+    else
+    {
+        renderSceneProperties();
+    }
+    
+    ImGui::EndChild();
+}
+
+void ProjectScreen::renderSceneProperties()
+{
+    // Scene name
+    ImGui::Text("Name:");
+    ImGui::SameLine(100);
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", currentScene.name.c_str());
+    
+    ImGui::Spacing();
+    
+    // Scene metadata
+    ImGui::Text("Up Axis:");
+    ImGui::SameLine(100);
+    ImGui::Text("%s", currentScene.upAxis.c_str());
+    
+    ImGui::Text("Units:");
+    ImGui::SameLine(100);
+    ImGui::Text("%.2f m/unit", currentScene.metersPerUnit);
+    
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    
+    // Scene hierarchy
+    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Hierarchy");
+    ImGui::Separator();
+    
+    if (currentScene.root)
+    {
+        // Recursive function to render hierarchy
+        std::function<void(SceneNode*, int)> renderNode = [&](SceneNode* node, int depth)
+        {
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow 
+                                     | ImGuiTreeNodeFlags_SpanAvailWidth;
+            
+            if (node->children.empty())
+            {
+                flags |= ImGuiTreeNodeFlags_Leaf;
+            }
+            
+            // Highlight meshes differently
+            if (node->type == PrimType::Mesh)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.8f, 1.0f, 1.0f));
+            }
+            
+            bool open = ImGui::TreeNodeEx(node->name.c_str(), flags);
+            
+            if (node->type == PrimType::Mesh)
+            {
+                ImGui::PopStyleColor();
+            }
+            
+            // Click to select (not on root)
+            if (ImGui::IsItemClicked() && node != currentScene.root.get())
+            {
+                selectedNode = node;
+            }
+            
+            if (open)
+            {
+                for (const auto& child : node->children)
+                {
+                    renderNode(child.get(), depth + 1);
+                }
+                ImGui::TreePop();
+            }
+        };
+        
+        renderNode(currentScene.root.get(), 0);
+    }
+}
+
+void ProjectScreen::renderNodeProperties(SceneNode* node)
+{
+    if (!node) return;
+    
+    // Node info
+    ImGui::Text("Name:");
+    ImGui::SameLine(100);
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", node->name.c_str());
+    
+    ImGui::Text("Type:");
+    ImGui::SameLine(100);
+    ImGui::Text("%s", primTypeToString(node->type));
+    
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    
+    // Mesh-specific properties
+    if (node->type == PrimType::Mesh && node->meshData)
+    {
+        ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Mesh Data");
+        ImGui::Separator();
+        
+        ImGui::Text("Vertices:");
+        ImGui::SameLine(100);
+        ImGui::Text("%zu", node->meshData->vertices.size());
+        
+        ImGui::Text("Triangles:");
+        ImGui::SameLine(100);
+        ImGui::Text("%zu", node->meshData->indices.size() / 3);
+        
+        ImGui::Spacing();
+        
+        // Display color
+        ImGui::Text("Color:");
+        glm::vec3& color = node->meshData->displayColor;
+        float colorArr[3] = { color.r, color.g, color.b };
+        if (ImGui::ColorEdit3("##MeshColor", colorArr))
+        {
+            color.r = colorArr[0];
+            color.g = colorArr[1];
+            color.b = colorArr[2];
+            // Update the GPU mesh
+            sceneRenderer.setScene(&currentScene);
+            // Mark scene as having unsaved changes
+            sceneModified = true;
+        }
+    }
+    
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    
+    // Children count
+    if (!node->children.empty())
+    {
+        ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Children (%zu)", node->children.size());
+        ImGui::Separator();
+        
+        for (const auto& child : node->children)
+        {
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+            
+            if (child->type == PrimType::Mesh)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.8f, 1.0f, 1.0f));
+            }
+            
+            if (ImGui::TreeNodeEx(child->name.c_str(), flags))
+            {
+                ImGui::TreePop();
+            }
+            
+            if (child->type == PrimType::Mesh)
+            {
+                ImGui::PopStyleColor();
+            }
+            
+            if (ImGui::IsItemClicked())
+            {
+                selectedNode = child.get();
+            }
+        }
+    }
+}
+
+void ProjectScreen::loadScene(const std::filesystem::path& scenePath)
+{
+    // Clear selection when loading a new scene
+    selectedNode = nullptr;
+    sceneModified = false;
+    
+    // Load the scene and pass to renderer
+    if (currentScene.loadFromFile(scenePath))
+    {
+        sceneRenderer.setScene(&currentScene);
+    }
+    else
+    {
+        sceneRenderer.clearScene();
+    }
+}
+
+void ProjectScreen::saveScene()
+{
+    if (!selectedScenePath.empty())
+    {
+        if (currentScene.saveToFile(selectedScenePath))
+        {
+            sceneModified = false;
+        }
     }
 }

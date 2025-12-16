@@ -39,6 +39,14 @@ FetchContent_MakeAvailable(tinyfiledialogs)
 add_library(tinyfiledialogs STATIC ${tinyfiledialogs_SOURCE_DIR}/tinyfiledialogs.c)
 target_include_directories(tinyfiledialogs PUBLIC ${tinyfiledialogs_SOURCE_DIR})
 
+# GLM - OpenGL Mathematics
+FetchContent_Declare(
+    glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG 1.0.1
+)
+FetchContent_MakeAvailable(glm)
+
 # Inter font
 FetchContent_Declare(
     inter_font
@@ -78,12 +86,15 @@ target_link_libraries(imgui PUBLIC glfw)
 find_package(OpenGL REQUIRED)
 target_link_libraries(imgui PUBLIC OpenGL::GL)
 
-# Main executable with screens
+# Main executable with screens, scene, and renderer
 add_executable(${PROJECT_NAME}
     src/main.cpp
     src/screens/welcome_screen.cpp
     src/screens/project_screen.cpp
+    src/scene/scene.cpp
+    src/renderer/camera.cpp
+    src/renderer/scene_renderer.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(${PROJECT_NAME} PRIVATE imgui tinyfiledialogs)
+target_link_libraries(${PROJECT_NAME} PRIVATE imgui tinyfiledialogs glm::glm)
