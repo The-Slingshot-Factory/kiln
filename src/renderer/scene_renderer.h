@@ -79,9 +79,15 @@ private:
     GLuint gridVBO = 0;
     int gridVertexCount = 0;
     
-    // Axes mesh
+    // Axes mesh (lines)
     GLuint axesVAO = 0;
     GLuint axesVBO = 0;
+    int axesVertexCount = 0;
+    
+    // Axes cone arrowheads (triangles)
+    GLuint axesConeVAO = 0;
+    GLuint axesConeVBO = 0;
+    int axesConeVertexCount = 0;
     
     // Scene meshes (loaded from Scene)
     std::vector<GPUMesh> sceneMeshes;

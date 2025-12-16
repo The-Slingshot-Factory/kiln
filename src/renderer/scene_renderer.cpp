@@ -266,7 +266,11 @@ void SceneRenderer::render()
     glUseProgram(lineShaderProgram);
     glBindVertexArray(axesVAO);
     glLineWidth(3.0f);
-    glDrawArrays(GL_LINES, 0, 6);
+    glDrawArrays(GL_LINES, 0, axesVertexCount);
+    
+    // Draw axis cone arrowheads
+    glBindVertexArray(axesConeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, axesConeVertexCount);
     
     // Cleanup state
     glBindVertexArray(0);
@@ -360,6 +364,8 @@ void SceneRenderer::cleanup()
     if (gridVBO) { glDeleteBuffers(1, &gridVBO); gridVBO = 0; }
     if (axesVAO) { glDeleteVertexArrays(1, &axesVAO); axesVAO = 0; }
     if (axesVBO) { glDeleteBuffers(1, &axesVBO); axesVBO = 0; }
+    if (axesConeVAO) { glDeleteVertexArrays(1, &axesConeVAO); axesConeVAO = 0; }
+    if (axesConeVBO) { glDeleteBuffers(1, &axesConeVBO); axesConeVBO = 0; }
     if (lineShaderProgram) { glDeleteProgram(lineShaderProgram); lineShaderProgram = 0; }
     if (meshShaderProgram) { glDeleteProgram(meshShaderProgram); meshShaderProgram = 0; }
     if (outlineShaderProgram) { glDeleteProgram(outlineShaderProgram); outlineShaderProgram = 0; }
@@ -638,33 +644,101 @@ void SceneRenderer::createAxesMesh()
 {
     // Axes: X=Red, Y=Green, Z=Blue (prominent colors)
     const float axisLength = 3.0f;
+    const float coneLength = 0.3f;   // Length of cone arrowhead
+    const float coneRadius = 0.08f;  // Radius of cone base
+    const int coneSegments = 12;     // Number of segments for smooth cone
     
-    float vertices[] = {
+    // Axis line vertices (shorter to make room for cone)
+    float lineVertices[] = {
         // X axis (bright red)
         0.0f, 0.0f, 0.0f,  1.0f, 0.2f, 0.2f,
-        axisLength, 0.0f, 0.0f,  1.0f, 0.2f, 0.2f,
+        axisLength - coneLength, 0.0f, 0.0f,  1.0f, 0.2f, 0.2f,
         
         // Y axis (bright green)
         0.0f, 0.0f, 0.0f,  0.2f, 1.0f, 0.2f,
-        0.0f, axisLength, 0.0f,  0.2f, 1.0f, 0.2f,
+        0.0f, axisLength - coneLength, 0.0f,  0.2f, 1.0f, 0.2f,
         
         // Z axis (bright blue)
         0.0f, 0.0f, 0.0f,  0.3f, 0.6f, 1.0f,
-        0.0f, 0.0f, axisLength,  0.3f, 0.6f, 1.0f,
+        0.0f, 0.0f, axisLength - coneLength,  0.3f, 0.6f, 1.0f,
     };
+    
+    axesVertexCount = 6;  // 3 axes * 2 vertices each
     
     glGenVertexArrays(1, &axesVAO);
     glGenBuffers(1, &axesVBO);
     
     glBindVertexArray(axesVAO);
     glBindBuffer(GL_ARRAY_BUFFER, axesVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(lineVertices), lineVertices, GL_STATIC_DRAW);
     
-    // Position attribute
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
     
-    // Color attribute
+    glBindVertexArray(0);
+    
+    // Create cone arrowheads (triangles)
+    std::vector<float> coneVertices;
+    
+    // Helper to add a cone along an axis
+    auto addCone = [&](glm::vec3 tip, glm::vec3 direction, glm::vec3 color) {
+        // Calculate perpendicular vectors for the cone base
+        glm::vec3 perp1, perp2;
+        if (std::abs(direction.x) < 0.9f) {
+            perp1 = glm::normalize(glm::cross(direction, glm::vec3(1, 0, 0)));
+        } else {
+            perp1 = glm::normalize(glm::cross(direction, glm::vec3(0, 1, 0)));
+        }
+        perp2 = glm::normalize(glm::cross(direction, perp1));
+        
+        glm::vec3 baseCenter = tip - direction * coneLength;
+        
+        // Generate cone triangles
+        for (int i = 0; i < coneSegments; ++i) {
+            float angle1 = (2.0f * 3.14159265f * i) / coneSegments;
+            float angle2 = (2.0f * 3.14159265f * (i + 1)) / coneSegments;
+            
+            glm::vec3 p1 = baseCenter + coneRadius * (std::cos(angle1) * perp1 + std::sin(angle1) * perp2);
+            glm::vec3 p2 = baseCenter + coneRadius * (std::cos(angle2) * perp1 + std::sin(angle2) * perp2);
+            
+            // Side triangle (tip, p1, p2)
+            coneVertices.push_back(tip.x); coneVertices.push_back(tip.y); coneVertices.push_back(tip.z);
+            coneVertices.push_back(color.r); coneVertices.push_back(color.g); coneVertices.push_back(color.b);
+            coneVertices.push_back(p1.x); coneVertices.push_back(p1.y); coneVertices.push_back(p1.z);
+            coneVertices.push_back(color.r); coneVertices.push_back(color.g); coneVertices.push_back(color.b);
+            coneVertices.push_back(p2.x); coneVertices.push_back(p2.y); coneVertices.push_back(p2.z);
+            coneVertices.push_back(color.r); coneVertices.push_back(color.g); coneVertices.push_back(color.b);
+            
+            // Base triangle (baseCenter, p2, p1) - reversed winding for correct facing
+            coneVertices.push_back(baseCenter.x); coneVertices.push_back(baseCenter.y); coneVertices.push_back(baseCenter.z);
+            coneVertices.push_back(color.r); coneVertices.push_back(color.g); coneVertices.push_back(color.b);
+            coneVertices.push_back(p2.x); coneVertices.push_back(p2.y); coneVertices.push_back(p2.z);
+            coneVertices.push_back(color.r); coneVertices.push_back(color.g); coneVertices.push_back(color.b);
+            coneVertices.push_back(p1.x); coneVertices.push_back(p1.y); coneVertices.push_back(p1.z);
+            coneVertices.push_back(color.r); coneVertices.push_back(color.g); coneVertices.push_back(color.b);
+        }
+    };
+    
+    // X cone (red)
+    addCone(glm::vec3(axisLength, 0, 0), glm::vec3(1, 0, 0), glm::vec3(1.0f, 0.2f, 0.2f));
+    // Y cone (green)
+    addCone(glm::vec3(0, axisLength, 0), glm::vec3(0, 1, 0), glm::vec3(0.2f, 1.0f, 0.2f));
+    // Z cone (blue)
+    addCone(glm::vec3(0, 0, axisLength), glm::vec3(0, 0, 1), glm::vec3(0.3f, 0.6f, 1.0f));
+    
+    axesConeVertexCount = static_cast<int>(coneVertices.size() / 6);
+    
+    glGenVertexArrays(1, &axesConeVAO);
+    glGenBuffers(1, &axesConeVBO);
+    
+    glBindVertexArray(axesConeVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, axesConeVBO);
+    glBufferData(GL_ARRAY_BUFFER, coneVertices.size() * sizeof(float), coneVertices.data(), GL_STATIC_DRAW);
+    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
     
