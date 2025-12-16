@@ -1,4 +1,4 @@
-# 🔥 Kiln
+# Kiln
 
 **A studio for creating reinforcement learning environments with high-fidelity simulation.**
 
@@ -17,6 +17,7 @@ Kiln provides an intuitive interface to design, prototype, and iterate on RL env
 sudo apt update && sudo apt install -y \
     build-essential \
     cmake \
+    libstdc++-dev \
     libgl1-mesa-dev \
     libxrandr-dev \
     libxinerama-dev \
@@ -44,9 +45,7 @@ sudo pacman -S base-devel cmake mesa libxrandr libxinerama libxcursor libxi
 ### 2. Build
 
 ```bash
-git clone https://github.com/your-username/kiln.git
-cd kiln
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
 
@@ -84,13 +83,18 @@ cmake --build build -j$(nproc)
 kiln/
 ├── src/
 │   ├── main.cpp              # Application entry point & main loop
-│   ├── config.h              # Window settings and app configuration
-│   └── screens/              # Modular screen system
-│       ├── screen.h          # Base screen interface
-│       ├── welcome_screen.h  # Welcome screen header
-│       ├── welcome_screen.cpp# Welcome screen implementation
-│       ├── project_screen.h  # Project screen header
-│       └── project_screen.cpp# Project screen implementation
+│   ├── core/
+│   │   └── config.h          # Window settings and app configuration
+│   ├── renderer/             # Rendering + camera
+│   ├── scene/                # Scene data + primitive tools
+│   └── ui/
+│       ├── dialogs/          # UI dialogs (new scene/folder, etc.)
+│       └── screens/          # Modular screen system
+│           ├── screen.h          # Base screen interface
+│           ├── welcome_screen.h  # Welcome screen header
+│           ├── welcome_screen.cpp# Welcome screen implementation
+│           ├── project_screen.h  # Project screen header
+│           └── project_screen.cpp# Project screen implementation
 ├── CMakeLists.txt            # Build configuration (auto-fetches dependencies)
 └── build/                    # Generated build artifacts
     ├── kiln                  # Executable
@@ -116,7 +120,7 @@ public:
 - `ProjectScreen` — Main project workspace with menu bar
 
 **Adding a new screen:**
-1. Create `my_screen.h` and `my_screen.cpp` in `src/screens/`
+1. Create `my_screen.h` and `my_screen.cpp` in `src/ui/screens/`
 2. Inherit from `Screen` and implement `update()`
 3. Use `switchTo<MyScreen>(args...)` to transition between screens
 4. Add the `.cpp` file to `CMakeLists.txt`
@@ -160,6 +164,7 @@ These are automatically downloaded during the CMake configure step:
 - [GLFW 3.4](https://github.com/glfw/glfw) — Window & input handling
 - [Dear ImGui v1.91.6](https://github.com/ocornut/imgui) — Immediate-mode GUI
 - [tinyfiledialogs](https://github.com/native-toolkit/tinyfiledialogs) — Native file dialogs
+- [GLM 1.0.1](https://github.com/g-truc/glm) — OpenGL math (vectors/matrices)
 - [Inter Font](https://rsms.me/inter/) — Modern, readable UI typography
 
 ---
