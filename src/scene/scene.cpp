@@ -1,9 +1,10 @@
 #include "scene.h"
 
+#include <tinyusdz.hh>
 #include <fstream>
 #include <sstream>
-#include <regex>
 #include <algorithm>
+#include <iostream>
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SceneNode Implementation
@@ -60,6 +61,12 @@ Scene::Scene()
     root = std::make_unique<SceneNode>("World", PrimType::Xform);
 }
 
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// USD Parsing
+// ═══════════════════════════════════════════════════════════════════════════
+
 bool Scene::loadFromFile(const std::filesystem::path& path)
 {
     clear();
@@ -69,28 +76,33 @@ bool Scene::loadFromFile(const std::filesystem::path& path)
         return false;
     }
     
-    std::ifstream file(path);
-    if (!file.is_open())
-    {
+    tinyusdz::Stage stage;
+    std::string warn, err;
+    
+    // LoadUSDFromFile handles .usda, .usdc, and .usdz automatically
+    bool ret = tinyusdz::LoadUSDFromFile(path.string(), &stage, &warn, &err);
+    
+    if (!warn.empty()) {
+        std::cout << "USD Load Warning: " << warn << std::endl;
+    }
+    
+    if (!ret) {
+        std::cerr << "USD Load Error: " << err << std::endl;
         return false;
     }
     
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string content = buffer.str();
-    file.close();
-    
     name = path.stem().string();
     
-    std::string ext = path.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    // Get metadata if available
+    // upAxis = stage.metas().upAxis.value_or("Y"); ... (API might vary, using defaults for now)
     
-    if (ext == ".usda")
+    // Traverse all root prims and convert to Kiln SceneNodes
+    for (const auto& prim : stage.root_prims())
     {
-        return parseUSDA(content);
+        processTinyUSDZPrim(prim, root.get());
     }
     
-    return false;
+    return true;
 }
 
 bool Scene::saveToFile(const std::filesystem::path& path) const
@@ -159,276 +171,90 @@ SceneNode* Scene::findNodeByPath(const std::string& path) const
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// USD Parsing
+// TinyUSDZ Conversion
 // ═══════════════════════════════════════════════════════════════════════════
 
-bool Scene::parseUSDA(const std::string& content)
+void Scene::processTinyUSDZPrim(const tinyusdz::Prim& prim, SceneNode* parent)
 {
-    // Parse header metadata
-    std::regex upAxisRegex(R"(upAxis\s*=\s*\"(\w+)\")");
-    std::regex metersRegex(R"(metersPerUnit\s*=\s*([\d.]+))");
-    std::regex defaultPrimRegex(R"(defaultPrim\s*=\s*\"(\w+)\")");
+    PrimType type = PrimType::Xform;
+    std::string primType = prim.type_name();
     
-    std::smatch match;
-    if (std::regex_search(content, match, upAxisRegex))
-    {
-        upAxis = match[1].str();
-    }
-    if (std::regex_search(content, match, metersRegex))
-    {
-        metersPerUnit = std::stof(match[1].str());
-    }
-    if (std::regex_search(content, match, defaultPrimRegex))
-    {
-        defaultPrim = match[1].str();
-    }
+    // Map USD type to Kiln PrimType
+    if (primType == "Mesh") type = PrimType::Mesh;
+    else if (primType == "Scope") type = PrimType::Scope;
+    else if (primType == "Xform") type = PrimType::Xform;
     
-    // Find root-level def blocks and parse recursively
-    // Regex to capture def with optional metadata section: def Type "Name" (metadata) { or def Type "Name" {
-    std::regex defRegex(R"(def\s+(\w+)\s+\"(\w+)\"\s*(?:\([^)]*\))?\s*\{)");
+    // Use the element name (leaf name) for the node
+    SceneNode* node = parent->addChild(prim.element_name(), type);
     
-    std::string::const_iterator searchStart(content.cbegin());
-    while (std::regex_search(searchStart, content.cend(), match, defRegex))
+    // Process Mesh data
+    if (const tinyusdz::GeomMesh* mesh = prim.as<tinyusdz::GeomMesh>())
     {
-        std::string primType = match[1].str();
-        std::string primName = match[2].str();
+        // Get pointers to data (TinyUSDZ returns copies for now via helper methods)
+        // In v0.9.0 we use get_points().
+        std::vector<tinyusdz::value::point3f> points = mesh->get_points();
         
-        // Get the full match to check for apiSchemas in metadata
-        std::string fullMatch = match[0].str();
-        bool hasPhysicsCollisionAPI = (fullMatch.find("PhysicsCollisionAPI") != std::string::npos);
-        
-        size_t startPos = match.position() + (searchStart - content.cbegin());
-        size_t bracePos = content.find('{', startPos);
-        
-        if (bracePos != std::string::npos)
+        node->meshData->vertices.reserve(points.size());
+        for (const auto& p : points)
         {
-            int braceCount = 1;
-            size_t endPos = bracePos + 1;
-            
-            while (braceCount > 0 && endPos < content.size())
-            {
-                if (content[endPos] == '{') braceCount++;
-                else if (content[endPos] == '}') braceCount--;
-                endPos++;
-            }
-            
-            std::string blockContent = content.substr(bracePos + 1, endPos - bracePos - 2);
-            
-            if (primType == "Xform" && primName == defaultPrim)
-            {
-                root->name = primName;
-                parseNode(blockContent, root.get(), 1);
-            }
-            else
-            {
-                PrimType type = stringToPrimType(primType);
-                SceneNode* node = root->addChild(primName, type);
-                
-                if (type == PrimType::Mesh)
-                {
-                    parseMeshData(blockContent, *node->meshData);
-                    // Also check metadata for PhysicsCollisionAPI
-                    if (hasPhysicsCollisionAPI)
-                    {
-                        node->meshData->collision = true;
-                    }
-                }
-                
-                parseNode(blockContent, node, 1);
-            }
-            
-            // Skip past the entire block we just parsed
-            searchStart = content.cbegin() + endPos;
+            node->meshData->vertices.emplace_back(p.x, p.y, p.z);
         }
-        else
-        {
-            searchStart = match.suffix().first;
-        }
-    }
-    
-    return true;
-}
-
-void Scene::parseNode(const std::string& content, SceneNode* parent, int depth)
-{
-    if (depth > 10) return;  // Prevent infinite recursion
-    
-    // Regex to capture def with optional metadata section: def Type "Name" (metadata) { or def Type "Name" {
-    std::regex defRegex(R"(def\s+(\w+)\s+\"(\w+)\"\s*(?:\([^)]*\))?\s*\{)");
-    
-    std::string::const_iterator searchStart(content.cbegin());
-    std::smatch match;
-    
-    while (std::regex_search(searchStart, content.cend(), match, defRegex))
-    {
-        std::string primType = match[1].str();
-        std::string primName = match[2].str();
         
-        // Get the full match to check for apiSchemas in metadata
-        std::string fullMatch = match[0].str();
-        bool hasPhysicsCollisionAPI = (fullMatch.find("PhysicsCollisionAPI") != std::string::npos);
+        // Face counts and indices
+        std::vector<int> counts = mesh->get_faceVertexCounts();
+        std::vector<int> indices = mesh->get_faceVertexIndices();
         
-        size_t matchStart = match.position() + (searchStart - content.cbegin());
-        size_t bracePos = content.find('{', matchStart);
+        // Triangulate
+        size_t vertexOffset = 0;
+        node->meshData->indices.reserve(indices.size()); // Approximation
         
-        if (bracePos != std::string::npos)
-        {
-            int braceCount = 1;
-            size_t endPos = bracePos + 1;
-            
-            while (braceCount > 0 && endPos < content.size())
-            {
-                if (content[endPos] == '{') braceCount++;
-                else if (content[endPos] == '}') braceCount--;
-                endPos++;
-            }
-            
-            std::string blockContent = content.substr(bracePos + 1, endPos - bracePos - 2);
-            
-            PrimType type = stringToPrimType(primType);
-            SceneNode* child = parent->addChild(primName, type);
-            
-            if (type == PrimType::Mesh)
-            {
-                parseMeshData(blockContent, *child->meshData);
-                // Also check metadata for PhysicsCollisionAPI
-                if (hasPhysicsCollisionAPI)
-                {
-                    child->meshData->collision = true;
-                }
-            }
-            
-            parseNode(blockContent, child, depth + 1);
-            
-            searchStart = content.cbegin() + endPos;
-        }
-        else
-        {
-            searchStart = match.suffix().first;
-        }
-    }
-}
-
-bool Scene::parseMeshData(const std::string& content, MeshData& meshData)
-{
-    // Parse points (vertices)
-    std::regex pointsRegex(R"(point3f\[\]\s+points\s*=\s*\[([^\]]+)\])");
-    std::smatch match;
-    
-    if (std::regex_search(content, match, pointsRegex))
-    {
-        std::string pointsStr = match[1].str();
-        
-        std::regex pointRegex(R"(\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\))");
-        std::string::const_iterator searchStart(pointsStr.cbegin());
-        
-        while (std::regex_search(searchStart, pointsStr.cend(), match, pointRegex))
-        {
-            float x = std::stof(match[1].str());
-            float y = std::stof(match[2].str());
-            float z = std::stof(match[3].str());
-            meshData.vertices.push_back(glm::vec3(x, y, z));
-            searchStart = match.suffix().first;
-        }
-    }
-    
-    // Parse face vertex indices
-    std::regex indicesRegex(R"(int\[\]\s+faceVertexIndices\s*=\s*\[([^\]]+)\])");
-    if (std::regex_search(content, match, indicesRegex))
-    {
-        std::vector<int> indices = parseIntArray(match[1].str());
-        for (int idx : indices)
-        {
-            meshData.indices.push_back(static_cast<unsigned int>(idx));
-        }
-    }
-    
-    // Parse face vertex counts to triangulate quads
-    std::regex countsRegex(R"(int\[\]\s+faceVertexCounts\s*=\s*\[([^\]]+)\])");
-    if (std::regex_search(content, match, countsRegex))
-    {
-        std::vector<int> counts = parseIntArray(match[1].str());
-        
-        bool hasQuads = false;
         for (int count : counts)
         {
-            if (count == 4)
+            if (vertexOffset + count > indices.size()) break; // Safety check
+            
+            if (count == 3)
             {
-                hasQuads = true;
-                break;
+                node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset]));
+                node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset + 1]));
+                node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset + 2]));
             }
+            else if (count == 4)
+            {
+                // Triangle 1
+                node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset]));
+                node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset + 1]));
+                node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset + 2]));
+                // Triangle 2
+                node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset]));
+                node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset + 2]));
+                node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset + 3]));
+            }
+            else if (count > 4)
+            {
+                // Simple fan triangulation for N-gons
+                for (int i = 1; i < count - 1; ++i)
+                {
+                    node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset]));
+                    node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset + i]));
+                    node->meshData->indices.push_back(static_cast<unsigned int>(indices[vertexOffset + i + 1]));
+                }
+            }
+            vertexOffset += count;
         }
         
-        if (hasQuads && !meshData.indices.empty())
+        // Display Color
+        tinyusdz::value::color3f color;
+        if (mesh->get_displayColor(&color)) 
         {
-            std::vector<unsigned int> triangulatedIndices;
-            size_t idx = 0;
-            
-            for (int count : counts)
-            {
-                if (count == 3)
-                {
-                    triangulatedIndices.push_back(meshData.indices[idx]);
-                    triangulatedIndices.push_back(meshData.indices[idx + 1]);
-                    triangulatedIndices.push_back(meshData.indices[idx + 2]);
-                    idx += 3;
-                }
-                else if (count == 4)
-                {
-                    triangulatedIndices.push_back(meshData.indices[idx]);
-                    triangulatedIndices.push_back(meshData.indices[idx + 1]);
-                    triangulatedIndices.push_back(meshData.indices[idx + 2]);
-                    
-                    triangulatedIndices.push_back(meshData.indices[idx]);
-                    triangulatedIndices.push_back(meshData.indices[idx + 2]);
-                    triangulatedIndices.push_back(meshData.indices[idx + 3]);
-                    idx += 4;
-                }
-                else
-                {
-                    idx += count;
-                }
-            }
-            
-            meshData.indices = triangulatedIndices;
+            node->meshData->displayColor = glm::vec3(color.r, color.g, color.b);
         }
     }
     
-    // Parse display color
-    std::regex colorRegex(R"(color3f\[\]\s+primvars:displayColor\s*=\s*\[\s*\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)\s*\])");
-    if (std::regex_search(content, match, colorRegex))
+    // Recurse to children
+    for (const auto& child : prim.children())
     {
-        meshData.displayColor.r = std::stof(match[1].str());
-        meshData.displayColor.g = std::stof(match[2].str());
-        meshData.displayColor.b = std::stof(match[3].str());
+        processTinyUSDZPrim(child, node);
     }
-    
-    // Parse physics:collisionEnabled (presence indicates PhysicsCollisionAPI is applied)
-    std::regex collisionRegex(R"(bool\s+physics:collisionEnabled\s*=\s*(true|false|1|0))");
-    if (std::regex_search(content, match, collisionRegex))
-    {
-        std::string value = match[1].str();
-        meshData.collision = (value == "true" || value == "1");
-    }
-    
-    return !meshData.vertices.empty();
-}
-
-std::vector<int> Scene::parseIntArray(const std::string& arrayStr)
-{
-    std::vector<int> result;
-    std::regex numRegex(R"(-?\d+)");
-    
-    std::string::const_iterator searchStart(arrayStr.cbegin());
-    std::smatch match;
-    
-    while (std::regex_search(searchStart, arrayStr.cend(), match, numRegex))
-    {
-        result.push_back(std::stoi(match[0].str()));
-        searchStart = match.suffix().first;
-    }
-    
-    return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

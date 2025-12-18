@@ -10,6 +10,8 @@
 // OpenUSD Prim Types
 // ═══════════════════════════════════════════════════════════════════════════
 
+namespace tinyusdz { class Prim; }
+
 enum class PrimType
 {
     Xform,      // Transform node - can contain children
@@ -110,11 +112,8 @@ public:
     SceneNode* findNodeByPath(const std::string& path) const;
     
 private:
-    // USD parsing helpers
-    bool parseUSDA(const std::string& content);
-    void parseNode(const std::string& content, SceneNode* parent, int depth = 0);
-    bool parseMeshData(const std::string& content, MeshData& meshData);
-    std::vector<int> parseIntArray(const std::string& arrayStr);
+    // USD parsing helpers (TinyUSDZ)
+    void processTinyUSDZPrim(const tinyusdz::Prim& prim, SceneNode* parent);
     
     // USD generation helpers
     std::string generateUSDA() const;

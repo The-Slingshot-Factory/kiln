@@ -39,6 +39,17 @@ FetchContent_MakeAvailable(tinyfiledialogs)
 add_library(tinyfiledialogs STATIC ${tinyfiledialogs_SOURCE_DIR}/tinyfiledialogs.c)
 target_include_directories(tinyfiledialogs PUBLIC ${tinyfiledialogs_SOURCE_DIR})
 
+# TinyUSDZ - USDZ/USDA/USDC loading
+FetchContent_Declare(
+    tinyusdz
+    GIT_REPOSITORY https://github.com/LightTransport/tinyusdz.git
+    GIT_TAG v0.9.0
+)
+# Disable examples and tools to speed up build
+set(TINYUSDZ_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(TINYUSDZ_WITH_PYTHON OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(tinyusdz)
+
 # GLM - OpenGL Mathematics
 FetchContent_Declare(
     glm
@@ -97,5 +108,8 @@ add_executable(${PROJECT_NAME}
     src/renderer/scene_renderer.cpp
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(${PROJECT_NAME} PRIVATE imgui tinyfiledialogs glm::glm)
+target_include_directories(${PROJECT_NAME} PRIVATE 
+    ${CMAKE_SOURCE_DIR}/src
+    ${tinyusdz_SOURCE_DIR}/src
+)
+target_link_libraries(${PROJECT_NAME} PRIVATE imgui tinyfiledialogs glm::glm tinyusdz_static)
