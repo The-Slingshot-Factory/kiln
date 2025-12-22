@@ -1,27 +1,17 @@
-# Build directories
-build/
-cmake-build-*/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
 
-# IDE
+# IDEs
 .idea/
 .vscode/
 *.swp
 *.swo
-*~
 
-# Compiled files
-*.o
-*.a
-*.so
-*.dylib
-
-# Executables
-kiln
-*.exe
-
-# CMake
-CMakeCache.txt
-CMakeFiles/
-compile_commands.json
-
-
+# Project specific
+recent_projects.txt
+.kiln/

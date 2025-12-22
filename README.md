@@ -2,7 +2,7 @@
 
 **A studio for creating reinforcement learning environments with high-fidelity simulation.**
 
-Kiln provides an intuitive interface to design, prototype, and iterate on RL environments—all backed by performant OpenGL rendering for real-time visualization.
+Kiln provides an intuitive interface to design, prototype, and iterate on RL environments.
 
 ---
 
@@ -10,49 +10,16 @@ Kiln provides an intuitive interface to design, prototype, and iterate on RL env
 
 ### 1. Install Dependencies
 
-<details>
-<summary><b>Ubuntu / Debian</b></summary>
+You need Python 3, `PyQt6`, and `qdarkstyle`. Also ensuring you have OpenGL bindings:
 
 ```bash
-sudo apt update && sudo apt install -y \
-    build-essential \
-    cmake \
-    libstdc++-dev \
-    libgl1-mesa-dev \
-    libxrandr-dev \
-    libxinerama-dev \
-    libxcursor-dev \
-    libxi-dev
-```
-</details>
-
-<details>
-<summary><b>Fedora</b></summary>
-
-```bash
-sudo dnf install -y gcc-c++ cmake mesa-libGL-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel
-```
-</details>
-
-<details>
-<summary><b>Arch Linux</b></summary>
-
-```bash
-sudo pacman -S base-devel cmake mesa libxrandr libxinerama libxcursor libxi
-```
-</details>
-
-### 2. Build
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
+pip install PyQt6 qdarkstyle PyOpenGL PyOpenGL_accelerate
 ```
 
-### 3. Run
+### 2. Run
 
 ```bash
-./build/kiln
+python3 kiln.py
 ```
 
 ---
@@ -60,20 +27,10 @@ cmake --build build -j$(nproc)
 ## 🎯 Features
 
 - **Project-based workflow** — Organize your RL environments into projects
-- **Real-time visualization** — OpenGL 3.3 rendering for smooth, high-fidelity simulation previews
-- **Cross-platform** — Runs on Linux (Windows/macOS support planned)
-- **Native look & feel** — Built with Dear ImGui for responsive, GPU-accelerated UI
-- **Modular screen architecture** — Clean separation of UI concerns for scalable development
-
----
-
-## 📋 Requirements
-
-| Component | Minimum Version |
-|-----------|-----------------|
-| CMake     | 3.20+           |
-| C++ Compiler | C++17 (GCC 8+, Clang 7+) |
-| OpenGL    | 3.3+            |
+- **Modern UI** — Built with `PyQt6` and `qdarkstyle` for a professional, high-performance interface
+- **Cross-platform** — Native hardware-accelerated rendering on Linux, Windows, and macOS
+- **Robust Architecture** — Uses `QStackedWidget` for smooth screen transitions and `QFileSystemModel` for fast file exploration
+- **3D Viewport** — Integrated OpenGL rendering for scene preview
 
 ---
 
@@ -81,91 +38,54 @@ cmake --build build -j$(nproc)
 
 ```
 kiln/
-├── src/
-│   ├── main.cpp              # Application entry point & main loop
-│   ├── core/
-│   │   └── config.h          # Window settings and app configuration
-│   ├── renderer/             # Rendering + camera
-│   ├── scene/                # Scene data + primitive tools
+├── kiln.py               # Main application entry point & controller
+├── kiln/
+│   ├── __init__.py
+│   ├── config.py         # Configuration & recent projects manager
+│   ├── constants.py      # Shared constants
 │   └── ui/
-│       ├── dialogs/          # UI dialogs (new scene/folder, etc.)
-│       └── screens/          # Modular screen system
-│           ├── screen.h          # Base screen interface
-│           ├── welcome_screen.h  # Welcome screen header
-│           ├── welcome_screen.cpp# Welcome screen implementation
-│           ├── project_screen.h  # Project screen header
-│           └── project_screen.cpp# Project screen implementation
-├── CMakeLists.txt            # Build configuration (auto-fetches dependencies)
-└── build/                    # Generated build artifacts
-    ├── kiln                  # Executable
-    └── fonts/                # Bundled Inter font
+│       ├── __init__.py
+│       ├── viewport.py       # OpenGL rendering widget
+│       ├── welcome_screen.py # landing screen (QWidget)
+│       └── project_screen.py # workspace (QWidget)
 ```
 
 ### Screen Architecture
 
-Kiln uses a **modular screen system** where each screen is a self-contained class:
+Kiln uses a modular system based on `PyQt6` widgets:
 
-```cpp
-class Screen
-{
-public:
-    virtual void onEnter() {}   // Called when screen becomes active
-    virtual void onExit() {}    // Called when screen is deactivated
-    virtual void update() = 0;  // Draw and handle UI each frame
-};
-```
-
-**Current screens:**
 - `WelcomeScreen` — Initial landing screen for creating/opening projects
-- `ProjectScreen` — Main project workspace with menu bar
-
-**Adding a new screen:**
-1. Create `my_screen.h` and `my_screen.cpp` in `src/ui/screens/`
-2. Inherit from `Screen` and implement `update()`
-3. Use `switchTo<MyScreen>(args...)` to transition between screens
-4. Add the `.cpp` file to `CMakeLists.txt`
+- `ProjectScreen` — Main project workspace with file explorer
 
 ---
 
-## 🔧 Development
+## 🔧 Linux Troubleshooting
 
-### IDE Setup
+### 1. OpenGL Errors / Window Not Appearing
+If you see errors like `libGL error: MESA-LOADER: failed to open...` or the window is transparent/black on Linux, it is likely due to a driver conflict or Wayland incompatibility.
 
-For IntelliSense/autocomplete, configure your editor to use the generated `compile_commands.json`:
-
-```bash
-# Generate compile commands
-cmake -B build
-
-# For VS Code: .vscode/settings.json
-{ "clangd.arguments": ["--compile-commands-dir=build"] }
-
-# For Neovim/other LSP clients: symlink or set in .clangd
-```
-
-### Build Types
+**Common Fix for Conda/Miniconda Users:**
+Conda environments often bundle an older version of `libstdc++` that conflicts with system OpenGL drivers. Pre-load your system's library:
 
 ```bash
-# Debug build (with symbols, no optimization)
-cmake -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-
-# Release build (optimized)
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6
+python3 kiln.py
 ```
 
----
+### 2. Wayland "Invisible Window"
+If the application runs but the window is invisible on Wayland compositors (GNOME/KDE on Wayland), force the X11 backend:
 
-## 📦 Dependencies (auto-fetched)
+```bash
+export QT_QPA_PLATFORM=xcb
+python3 kiln.py
+```
 
-These are automatically downloaded during the CMake configure step:
+### 3. Missing Drivers
+If OpenGL is not initializing at all, ensure you have the Mesa drivers installed:
 
-- [GLFW 3.4](https://github.com/glfw/glfw) — Window & input handling
-- [Dear ImGui v1.91.6](https://github.com/ocornut/imgui) — Immediate-mode GUI
-- [tinyfiledialogs](https://github.com/native-toolkit/tinyfiledialogs) — Native file dialogs
-- [GLM 1.0.1](https://github.com/g-truc/glm) — OpenGL math (vectors/matrices)
-- [Inter Font](https://rsms.me/inter/) — Modern, readable UI typography
+```bash
+sudo apt-get install libgl1-mesa-dri libglx-mesa0 libegl1-mesa mesa-utils
+```
 
 ---
 
