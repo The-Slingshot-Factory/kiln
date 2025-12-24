@@ -1,0 +1,19 @@
+name: kiln-dev
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  # Use 3.10 for broad compatibility with ML/sim wheels.
+  - python=3.10
+  - pip
+
+  # PyTorch (CPU by default). If you want CUDA, replace `cpuonly` with
+  # `pytorch-cuda=<your_cuda_version>` and add the `nvidia` channel.
+  - pytorch>=2.2
+  - cpuonly
+
+  # Install Kiln + optional extras via pip so dependencies stay in one place.
+  - pip:
+      - -e .[usd,sim]
+
+

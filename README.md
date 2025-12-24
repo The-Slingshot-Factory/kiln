@@ -8,18 +8,75 @@ Kiln provides an intuitive interface to design, prototype, and iterate on RL env
 
 ## ⚡ Quick Start
 
-### 1. Install Dependencies
+### Option A: Conda env (recommended)
 
-You need Python 3, `PyQt6`, and `qdarkstyle`. Also ensuring you have OpenGL bindings:
+Create a dedicated environment with all UI + USD + Genesis dependencies:
 
 ```bash
-pip install PyQt6 qdarkstyle PyOpenGL PyOpenGL_accelerate
+conda env create -f environment.yml
+conda activate kiln-dev
 ```
 
-### 2. Run
+Run the UI:
 
 ```bash
 python3 kiln.py
+```
+
+Run the Genesis smoke test:
+
+```bash
+python3 examples/genesis_demo.py
+```
+
+---
+
+### Option B: Pip (UI-only)
+
+### 1. Install (UI)
+
+You need Python 3, `PyQt6`, and `qdarkstyle`, plus OpenGL bindings:
+
+```bash
+python -m pip install PyQt6 qdarkstyle PyOpenGL PyOpenGL_accelerate
+```
+
+Or install from this repo (recommended):
+
+```bash
+python -m pip install -e .
+```
+
+### 2. Optional: USD support
+
+Kiln can create and preview USD scenes (`.usda/.usd`). To enable USD features:
+
+```bash
+python -m pip install -e ".[usd]"
+```
+
+### 3. Optional: Genesis simulation backend
+
+Kiln’s upcoming simulation layer uses the Genesis physics platform. Install PyTorch first (choose CPU/GPU as needed), then install the optional Genesis extra:
+
+- Genesis docs: [Genesis documentation](https://genesis-world.readthedocs.io/en/latest/)
+
+```bash
+python -m pip install -e ".[sim]"
+```
+
+### 4. Run (UI)
+
+```bash
+python3 kiln.py
+```
+
+### 5. Smoke test (Genesis)
+
+After installing the `sim` extra, you can run a simple headless demo:
+
+```bash
+python3 examples/genesis_demo.py
 ```
 
 ---
