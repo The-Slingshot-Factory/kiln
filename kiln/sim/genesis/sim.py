@@ -248,12 +248,14 @@ class GenesisSim:
         self._force6_cache[key] = force6
 
     def _set_dofs_velocity6(self, entity: Any, vel6: tuple[float, float, float, float, float, float]) -> None:
-        # Prefer velocity control (acts more like an actuator); fall back to directly setting.
-        if hasattr(entity, "control_dofs_velocity"):
-            entity.control_dofs_velocity(vel6)
-            return
+        # NOTE: In Genesis 0.3.x, `control_dofs_velocity()` does not appear to move free rigid
+        # bodies (it's intended for articulated/actuated control). For kinematic-ish control
+        # of rigid entities, we prefer `set_dofs_velocity()` to directly set base DoF velocity.
         if hasattr(entity, "set_dofs_velocity"):
             entity.set_dofs_velocity(vel6)
+            return
+        if hasattr(entity, "control_dofs_velocity"):
+            entity.control_dofs_velocity(vel6)
             return
         raise AttributeError("Entity has no supported dofs velocity setter.")
 
