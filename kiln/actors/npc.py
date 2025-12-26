@@ -7,6 +7,7 @@ from typing import Any, Iterable
 
 from .actions import DiscreteAction
 from .car import CarBlock, CarBlockConfig
+from .pathfinding import NavGrid, astar, cells_to_waypoints, simplify_path_cells
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,12 @@ class NPCBlockConfig(CarBlockConfig):
     stuck_steps: int = 30
     progress_eps: float = 1e-3
 
+    # Navigation / pathfinding (static obstacles like buildings)
+    nav_cell_size: float = 0.5
+    nav_inflate: float = 0.3
+    waypoint_tolerance: float = 0.35
+    max_goal_samples: int = 50
+
 
 class NPCBlock(CarBlock):
     """
@@ -48,6 +55,7 @@ class NPCBlock(CarBlock):
         position: tuple[float, float, float] = (2.0, 0.0, 0.15),
         config: NPCBlockConfig | None = None,
         rng: random.Random | None = None,
+        nav_grid: NavGrid | None = None,
     ):
         self.npc_config = config or NPCBlockConfig()
         super().__init__(sim, name=name, position=position, config=self.npc_config)
@@ -59,15 +67,52 @@ class NPCBlock(CarBlock):
         self._prev_goal_dist: float | None = None
         self._stuck_counter: int = 0
 
+        # Optional nav grid for A* routing around static obstacles.
+        self._nav_grid: NavGrid | None = nav_grid
+        self._waypoints_xy: list[tuple[float, float]] = []
+        self._waypoint_idx: int = 0
+        # Genesis entities don't have pose getters until the scene is built. Cache spawn XY so
+        # we can plan an initial path before build().
+        self._last_xy: tuple[float, float] = (float(position[0]), float(position[1]))
+
     def set_roam_bounds(self, xy_min: tuple[float, float], xy_max: tuple[float, float]) -> None:
         # Will be used by the roaming heuristic.
         self._roam_xy_min = xy_min
         self._roam_xy_max = xy_max
 
+    def set_nav_grid(self, nav_grid: NavGrid | None) -> None:
+        self._nav_grid = nav_grid
+        self._waypoints_xy = []
+        self._waypoint_idx = 0
+
     def pick_new_goal(self) -> tuple[float, float]:
         xmin, ymin = self._roam_xy_min
         xmax, ymax = self._roam_xy_max
-        self._goal_xy = (self._rng.uniform(xmin, xmax), self._rng.uniform(ymin, ymax))
+        # If we have a nav grid, sample a reachable goal and build a path.
+        if self._nav_grid is not None:
+            px, py = self._get_xy()
+            start = self._nav_grid.world_to_cell(px, py)
+
+            for _ in range(max(1, self.npc_config.max_goal_samples)):
+                gx = self._rng.uniform(xmin, xmax)
+                gy = self._rng.uniform(ymin, ymax)
+                goal = self._nav_grid.world_to_cell(gx, gy)
+                path = astar(self._nav_grid, start, goal)
+                if path is None:
+                    continue
+                path = simplify_path_cells(path)
+                self._waypoints_xy = cells_to_waypoints(self._nav_grid, path)
+                self._waypoint_idx = 0
+                self._goal_xy = (gx, gy)
+                break
+            else:
+                # Fallback if we couldn't find a reachable goal quickly.
+                self._goal_xy = (self._rng.uniform(xmin, xmax), self._rng.uniform(ymin, ymax))
+                self._waypoints_xy = []
+                self._waypoint_idx = 0
+        else:
+            self._goal_xy = (self._rng.uniform(xmin, xmax), self._rng.uniform(ymin, ymax))
+
         self._prev_goal_dist = None
         self._stuck_counter = 0
         return self._goal_xy
@@ -77,45 +122,71 @@ class NPCBlock(CarBlock):
         Roaming heuristic:
         - Pick a random goal in bounds
         - Steer toward it
-        - Avoid obstacles (raycast-first; proximity fallback; stuck fallback)
+        - If nav grid is provided: follow A* waypoints around static obstacles (buildings)
+        - Avoid dynamic obstacles via proximity (optional)
         """
         if self._goal_xy is None:
             self.pick_new_goal()
 
-        gx, gy = self._goal_xy
-        px, py, _ = self.sim.get_position(self.entity)
-        dx, dy = gx - px, gy - py
-        goal_dist = math.hypot(dx, dy)
+        px, py = self._get_xy()
+        target_x, target_y = self._goal_xy
+
+        # Waypoint tracking (if path planned)
+        if self._nav_grid is not None and self._waypoints_xy:
+            while self._waypoint_idx < len(self._waypoints_xy):
+                wx, wy = self._waypoints_xy[self._waypoint_idx]
+                if math.hypot(wx - px, wy - py) <= self.npc_config.waypoint_tolerance:
+                    self._waypoint_idx += 1
+                    continue
+                break
+            if self._waypoint_idx >= len(self._waypoints_xy):
+                # Completed path -> pick another goal.
+                self.pick_new_goal()
+                target_x, target_y = self._goal_xy
+            else:
+                target_x, target_y = self._waypoints_xy[self._waypoint_idx]
+
+        dx, dy = target_x - px, target_y - py
+        target_dist = math.hypot(dx, dy)
 
         # Goal reached -> pick another.
-        if goal_dist <= self.npc_config.goal_tolerance:
+        if self._nav_grid is None and target_dist <= self.npc_config.goal_tolerance:
             self.pick_new_goal()
             return DiscreteAction.TURN_LEFT if self._rng.random() < 0.5 else DiscreteAction.TURN_RIGHT
 
         # Stuck detection based on goal distance not improving.
-        if self._prev_goal_dist is not None and goal_dist >= (self._prev_goal_dist - self.npc_config.progress_eps):
+        if self._prev_goal_dist is not None and target_dist >= (self._prev_goal_dist - self.npc_config.progress_eps):
             self._stuck_counter += 1
         else:
             self._stuck_counter = 0
-        self._prev_goal_dist = goal_dist
+        self._prev_goal_dist = target_dist
 
         if self._stuck_counter >= self.npc_config.stuck_steps:
-            # Hard reset: new goal + random turn.
-            self.pick_new_goal()
+            # Replan if we have a nav grid; otherwise hard reset.
+            if self._nav_grid is not None and self._goal_xy is not None:
+                start = self._nav_grid.world_to_cell(px, py)
+                goal = self._nav_grid.world_to_cell(self._goal_xy[0], self._goal_xy[1])
+                path = astar(self._nav_grid, start, goal)
+                if path is not None:
+                    path = simplify_path_cells(path)
+                    self._waypoints_xy = cells_to_waypoints(self._nav_grid, path)
+                    self._waypoint_idx = 0
+                    self._stuck_counter = 0
+                else:
+                    self.pick_new_goal()
+            else:
+                self.pick_new_goal()
             return DiscreteAction.TURN_LEFT if self._rng.random() < 0.5 else DiscreteAction.TURN_RIGHT
 
-        # 1) Raycast-based avoidance (best effort; GenesisSim.raycast returns hit=False if unsupported)
-        avoid = self._avoid_with_rays()
-        if avoid is not None:
-            return avoid
-
-        # 2) Proximity-based avoidance if we were given obstacle entities.
+        # Proximity-based avoidance if we were given obstacle entities.
+        # In the pathfinding demo, pass only dynamic obstacles (car + other pedestrians),
+        # since buildings are handled by the nav grid.
         if obstacles is not None:
             avoid = self._avoid_with_proximity(obstacles)
             if avoid is not None:
                 return avoid
 
-        # 3) Goal seeking (pure pursuit-ish with discrete steering)
+        # Goal seeking (pure pursuit-ish with discrete steering)
         desired_yaw = math.atan2(dy, dx)
         yaw_err = _wrap_pi(desired_yaw - self._yaw)
 
@@ -127,6 +198,19 @@ class NPCBlock(CarBlock):
         if self._target_speed < cruise:
             return DiscreteAction.ACCELERATE
         return DiscreteAction.DECELERATE
+
+    def _get_xy(self) -> tuple[float, float]:
+        """
+        Best-effort current XY position.
+
+        Before Genesis `scene.build()`, entity pose getters raise, so we fall back to cached spawn.
+        """
+        try:
+            px, py, _ = self.sim.get_position(self.entity)
+            self._last_xy = (px, py)
+            return (px, py)
+        except Exception:
+            return self._last_xy
 
     # ----------------------------
     # Internals

@@ -1,11 +1,30 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 import random
 
 from kiln.actors import CarBlock, CarBlockConfig, ControlMode, DiscreteAction, NPCBlock, NPCBlockConfig
+from kiln.actors.pathfinding import AABB, NavGrid
 from kiln.sim.genesis import GenesisSim, GenesisSimConfig
+
+
+def _camera_height_for_bounds(
+    *,
+    xy_min: tuple[float, float],
+    xy_max: tuple[float, float],
+    fov_deg: float,
+    margin: float = 1.15,
+) -> float:
+    half_extent = max(
+        abs(xy_min[0]),
+        abs(xy_min[1]),
+        abs(xy_max[0]),
+        abs(xy_max[1]),
+    )
+    half_fov = math.radians(float(fov_deg)) * 0.5
+    return (half_extent / max(1e-6, math.tan(half_fov))) * margin
 
 
 def main() -> int:
@@ -34,17 +53,25 @@ def main() -> int:
         "--camera-pos",
         type=float,
         nargs=3,
-        default=(6.0, 6.0, 4.0),
+        default=None,
         metavar=("X", "Y", "Z"),
-        help="Camera position.",
+        help="Camera position. Default: bird's-eye above the map.",
     )
     parser.add_argument(
         "--camera-lookat",
         type=float,
         nargs=3,
-        default=(0.0, 0.0, 0.2),
+        default=None,
         metavar=("X", "Y", "Z"),
-        help="Camera look-at target.",
+        help="Camera look-at target. Default: map center.",
+    )
+    parser.add_argument(
+        "--camera-up",
+        type=float,
+        nargs=3,
+        default=(0.0, 1.0, 0.0),
+        metavar=("X", "Y", "Z"),
+        help="Camera up vector. For bird's-eye, use (0,1,0) so it's not parallel to look direction.",
     )
     parser.add_argument("--camera-fov", type=float, default=60.0, help="Camera field of view (degrees).")
     args = parser.parse_args()
@@ -53,8 +80,13 @@ def main() -> int:
 
     control_mode = ControlMode.KINEMATIC if args.control_mode == "kinematic" else ControlMode.FORCE_TORQUE
 
-    sim = GenesisSim(GenesisSimConfig(dt=1 / 60, substeps=1, headless=True, seed=args.seed))
+    # Slightly more stable defaults for contact-heavy scenes.
+    sim = GenesisSim(GenesisSimConfig(dt=1 / 60, substeps=4, headless=True, seed=args.seed))
     sim.create_programmatic_scene()
+
+    # Map bounds (used for camera framing + nav grid later)
+    MAP_XY_MIN = (-12.0, -12.0)
+    MAP_XY_MAX = (12.0, 12.0)
 
     # Optional: capture rendered frames to a GIF.
     gif_writer = None
@@ -72,72 +104,135 @@ def main() -> int:
 
         if sim.scene is None:
             raise RuntimeError("Genesis scene was not created.")
+        # Bird's-eye default if the user didn't specify a camera.
+        if args.camera_pos is None:
+            h = _camera_height_for_bounds(xy_min=MAP_XY_MIN, xy_max=MAP_XY_MAX, fov_deg=args.camera_fov, margin=1.2)
+            cam_pos = (0.0, 0.0, h)
+        else:
+            cam_pos = tuple(args.camera_pos)
+
+        cam_lookat = (0.0, 0.0, 0.0) if args.camera_lookat is None else tuple(args.camera_lookat)
+
+        # IMPORTANT: Genesis camera defaults to far=20.0. For bird's-eye views the camera height
+        # can exceed that, which would clip out the ground/car/pedestrians and make the GIF look static.
+        cam_dist = math.dist(cam_pos, cam_lookat)
+        cam_far = max(50.0, cam_dist * 3.0)
+
         cam = sim.scene.add_camera(
             res=(args.gif_res, args.gif_res),
-            pos=tuple(args.camera_pos),
-            lookat=tuple(args.camera_lookat),
+            pos=cam_pos,
+            lookat=cam_lookat,
+            up=tuple(args.camera_up),
             fov=args.camera_fov,
             GUI=False,
+            near=0.1,
+            far=cam_far,
         )
         gif_writer = imageio.get_writer(str(gif_path), mode="I", duration=1.0 / float(args.gif_fps))
 
     # Colors (category-coded)
-    car_color = (1.0, 0.2, 0.2)  # red
-    npc_color = (0.2, 0.6, 1.0)  # blue
-    obstacle_color = (0.75, 0.75, 0.75)  # light gray
+    car_color = (1.0, 0.1, 0.1)  # red
+    npc_color = (0.15, 0.55, 1.0)  # blue (pedestrians)
+    building_color = (0.60, 0.60, 0.60)  # gray (buildings)
 
-    # Simple obstacles (static-ish blocks).
-    obstacles = []
-    for i in range(8):
-        x = rng.uniform(-4.0, 4.0)
-        y = rng.uniform(-4.0, 4.0)
-        try:
-            obstacles.append(
-                sim.add_box(
-                    name=f"obstacle_{i}",
-                    size=(0.6, 0.6, 0.6),
-                    position=(x, y, 0.3),
-                    mass=0.0,
-                    color=obstacle_color,
-                )
+    # Buildings (static blocks).
+    # Procedural "small city": a grid of blocks with roads between them and varied building footprints/heights.
+    buildings: list[dict[str, object]] = []
+    building_aabbs: list[AABB] = []
+    CITY_N = 5  # buildings per axis
+    ROAD_W = 1.5
+    map_w = MAP_XY_MAX[0] - MAP_XY_MIN[0]
+    map_h = MAP_XY_MAX[1] - MAP_XY_MIN[1]
+    cell_w = (map_w - (CITY_N + 1) * ROAD_W) / CITY_N
+    cell_h = (map_h - (CITY_N + 1) * ROAD_W) / CITY_N
+    cell_margin = 0.25  # keep some sidewalk inside each block cell
+
+    building_idx = 0
+    for ix in range(CITY_N):
+        for iy in range(CITY_N):
+            cell_xmin = MAP_XY_MIN[0] + ROAD_W + ix * (cell_w + ROAD_W)
+            cell_ymin = MAP_XY_MIN[1] + ROAD_W + iy * (cell_h + ROAD_W)
+
+            # Random footprint within the cell.
+            max_bx = max(1.0, cell_w - 2.0 * cell_margin)
+            max_by = max(1.0, cell_h - 2.0 * cell_margin)
+            bx = rng.uniform(1.2, max_bx)
+            by = rng.uniform(1.2, max_by)
+            ox = rng.uniform(cell_margin, max( cell_margin, cell_w - cell_margin - bx))
+            oy = rng.uniform(cell_margin, max( cell_margin, cell_h - cell_margin - by))
+
+            xmin = cell_xmin + ox
+            ymin = cell_ymin + oy
+            xmax = xmin + bx
+            ymax = ymin + by
+            cx = (xmin + xmax) * 0.5
+            cy = (ymin + ymax) * 0.5
+
+            # Height (slightly taller near center).
+            dist = math.hypot(cx, cy) / max(1e-6, max(abs(MAP_XY_MAX[0]), abs(MAP_XY_MAX[1])))
+            sz = rng.uniform(2.0, 5.0) + (1.0 - dist) * rng.uniform(0.0, 3.0)
+
+            ent = sim.add_box(
+                name=f"building_{building_idx}",
+                size=(bx, by, sz),
+                position=(cx, cy, sz / 2.0),
+                mass=0.0,
+                color=building_color,
             )
-        except Exception:
-            # Fallback if this Genesis version doesn't support static bodies via mass=0.
-            obstacles.append(
-                sim.add_box(
-                    name=f"obstacle_{i}",
-                    size=(0.6, 0.6, 0.6),
-                    position=(x, y, 0.3),
-                    mass=1.0,
-                    color=obstacle_color,
-                )
-            )
+            buildings.append({"entity": ent, "cx": cx, "cy": cy, "sx": bx, "sy": by, "sz": sz})
+            building_aabbs.append(AABB(xmin, ymin, xmax, ymax))
+            building_idx += 1
+
+    # Navigation grid for pedestrians (plans around buildings).
+    nav_grid = NavGrid.build(
+        xy_min=MAP_XY_MIN,
+        xy_max=MAP_XY_MAX,
+        cell_size=0.5,
+        obstacles=building_aabbs,
+        inflate=0.3,  # pedestrian clearance
+    )
+
+    def sample_free_xy(*, preferred: tuple[float, float] | None = None) -> tuple[float, float]:
+        if preferred is not None:
+            c = nav_grid.world_to_cell(preferred[0], preferred[1])
+            if not nav_grid.is_blocked(c):
+                return nav_grid.cell_center_world(c)
+
+        for _ in range(5000):
+            ix = rng.randrange(nav_grid.width)
+            iy = rng.randrange(nav_grid.height)
+            c = (ix, iy)
+            if nav_grid.is_blocked(c):
+                continue
+            return nav_grid.cell_center_world(c)
+        raise RuntimeError("Failed to sample a free spawn cell.")
 
     car = CarBlock(
         sim,
         name="car",
-        position=(0.0, 0.0, 0.15),
+        position=(*sample_free_xy(preferred=(0.0, MAP_XY_MIN[1] + ROAD_W * 0.5)), 0.15),
         config=CarBlockConfig(control_mode=control_mode, color=car_color),
     )
 
     npcs: list[NPCBlock] = []
     for i in range(args.npcs):
-        x = rng.uniform(-3.0, 3.0)
-        y = rng.uniform(-3.0, 3.0)
+        x, y = sample_free_xy()
         npc = NPCBlock(
             sim,
             name=f"npc_{i}",
             position=(x, y, 0.15),
             config=NPCBlockConfig(
                 control_mode=control_mode,
-                roam_xy_min=(-5.0, -5.0),
-                roam_xy_max=(5.0, 5.0),
-                cruise_speed=2.0,
+                roam_xy_min=MAP_XY_MIN,
+                roam_xy_max=MAP_XY_MAX,
+                cruise_speed=1.2,
                 color=npc_color,
+                # Smaller, square footprint (pedestrian-like).
+                size=(0.25, 0.25, 0.5),
             ),
             rng=random.Random(args.seed + 1000 + i),
+            nav_grid=nav_grid,
         )
-        npc.pick_new_goal()
         npcs.append(npc)
 
     # Build once after all entities are added.
@@ -156,8 +251,9 @@ def main() -> int:
             else:
                 car.apply_action(DiscreteAction.DECELERATE)
 
-            # NPC roaming
-            world_obstacles = obstacles + [car.entity] + [n.entity for n in npcs]
+            # Dynamic obstacle avoidance: car + other pedestrians.
+            # Buildings are handled by A* routing on the nav grid.
+            world_obstacles = [car.entity] + [n.entity for n in npcs]
             for npc in npcs:
                 a = npc.policy_step(obstacles=world_obstacles)
                 npc.apply_action(a)
