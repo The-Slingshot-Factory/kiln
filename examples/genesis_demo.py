@@ -80,8 +80,8 @@ def main() -> int:
 
     control_mode = ControlMode.KINEMATIC if args.control_mode == "kinematic" else ControlMode.FORCE_TORQUE
 
-    # Slightly more stable defaults for contact-heavy scenes.
-    sim = GenesisSim(GenesisSimConfig(dt=1 / 60, substeps=4, headless=True, seed=args.seed))
+    # More stable defaults for contact-heavy scenes (fast pedestrians + buildings).
+    sim = GenesisSim(GenesisSimConfig(dt=1 / 60, substeps=8, headless=True, seed=args.seed))
     sim.create_programmatic_scene()
 
     # Map bounds (used for camera framing + nav grid later)
@@ -189,7 +189,7 @@ def main() -> int:
         xy_max=MAP_XY_MAX,
         cell_size=0.5,
         obstacles=building_aabbs,
-        inflate=0.3,  # pedestrian clearance
+        inflate=0.55,  # pedestrian clearance (keep them well away from building walls)
     )
 
     def sample_free_xy(*, preferred: tuple[float, float] | None = None) -> tuple[float, float]:
@@ -225,7 +225,13 @@ def main() -> int:
                 control_mode=control_mode,
                 roam_xy_min=MAP_XY_MIN,
                 roam_xy_max=MAP_XY_MAX,
-                cruise_speed=1.2,
+                # Faster pedestrians so pathing/nav can be stress-tested visually.
+                cruise_speed=4.0,
+                max_speed=6.0,
+                speed_delta=1.0,
+                turn_rate=3.0,
+                heading_threshold=0.25,
+                waypoint_tolerance=0.6,
                 color=npc_color,
                 # Smaller, square footprint (pedestrian-like).
                 size=(0.25, 0.25, 0.5),

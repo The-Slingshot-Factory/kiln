@@ -212,6 +212,39 @@ class NPCBlock(CarBlock):
         except Exception:
             return self._last_xy
 
+    def step_control(self, dt: float) -> None:
+        """
+        Apply control, with an extra safety clamp when using a nav grid:
+        don't drive into blocked cells (buildings). If the next step would enter a
+        blocked cell, we zero linear velocity (but still allow turning).
+        """
+        if self._nav_grid is not None and self.config.control_mode.value == "kinematic":
+            dtf = float(dt)
+            # Update yaw the same way the base kinematic controller does.
+            self._yaw += self._target_yaw_rate * dtf
+
+            px, py = self._get_xy()
+            fx = math.cos(self._yaw)
+            fy = math.sin(self._yaw)
+            vx = self._target_speed * fx
+            vy = self._target_speed * fy
+
+            nx = px + vx * dtf
+            ny = py + vy * dtf
+            c_next = self._nav_grid.world_to_cell(nx, ny)
+            if self._nav_grid.is_blocked(c_next):
+                # Stop at building boundary. Keep turning so the policy can reorient.
+                self._target_speed = 0.0
+                self.sim.set_linear_velocity(self.entity, (0.0, 0.0, 0.0))
+                self.sim.set_angular_velocity(self.entity, (0.0, 0.0, float(self._target_yaw_rate)))
+                return
+
+            self.sim.set_linear_velocity(self.entity, (vx, vy, 0.0))
+            self.sim.set_angular_velocity(self.entity, (0.0, 0.0, float(self._target_yaw_rate)))
+            return
+
+        super().step_control(dt)
+
     # ----------------------------
     # Internals
     # ----------------------------
