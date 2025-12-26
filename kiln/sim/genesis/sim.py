@@ -16,6 +16,15 @@ def _import_genesis():
     return gs
 
 
+def _normalize_rgb(color: tuple[float, ...]) -> tuple[float, ...]:
+    # Accept either 0..1 floats or 0..255 ints/floats.
+    if not color:
+        return color
+    if max(color) > 1.0:
+        return tuple(float(c) / 255.0 for c in color)
+    return tuple(float(c) for c in color)
+
+
 @dataclass(frozen=True)
 class GenesisSimConfig:
     dt: float = 1.0 / 60.0
@@ -110,7 +119,8 @@ class GenesisSim:
 
         # Add a ground plane if available.
         try:
-            self.add_ground_plane()
+            # Dark ground so colored blocks stand out in rendered demos.
+            self.add_ground_plane(color=(0.18, 0.18, 0.18))
         except Exception:
             # Ground is optional; demo can still run in free space.
             pass
@@ -154,7 +164,12 @@ class GenesisSim:
     # ----------------------------
     # Entity creation helpers
     # ----------------------------
-    def add_ground_plane(self, position: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> Any:
+    def add_ground_plane(
+        self,
+        position: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        *,
+        color: tuple[float, float, float] | tuple[float, float, float, float] | None = None,
+    ) -> Any:
         if self.scene is None:
             raise RuntimeError("Scene is not created.")
         gs = self._gs or _import_genesis()
@@ -162,7 +177,10 @@ class GenesisSim:
         # Genesis 0.3.x: scene.add_entity(morph=gs.morphs.Plane(...))
         if hasattr(gs, "morphs") and hasattr(gs.morphs, "Plane"):
             morph = gs.morphs.Plane(pos=position)
-            return self.scene.add_entity(morph)  # type: ignore[misc]
+            surface = None
+            if hasattr(gs, "surfaces") and hasattr(gs.surfaces, "Default") and color is not None:
+                surface = gs.surfaces.Default(color=_normalize_rgb(color))
+            return self.scene.add_entity(morph, surface=surface)  # type: ignore[misc]
 
         raise RuntimeError("Genesis Plane morph is not available in this version.")
 
@@ -173,6 +191,7 @@ class GenesisSim:
         size: tuple[float, float, float] = (1.0, 0.5, 0.3),
         position: tuple[float, float, float] = (0.0, 0.0, 0.15),
         mass: float = 1.0,
+        color: tuple[float, float, float] | tuple[float, float, float, float] | None = None,
     ) -> Any:
         if self.scene is None:
             raise RuntimeError("Scene is not created.")
@@ -182,10 +201,13 @@ class GenesisSim:
         if hasattr(gs, "morphs") and hasattr(gs.morphs, "Box"):
             fixed = bool(mass <= 0.0)
             morph = gs.morphs.Box(pos=position, size=size, fixed=fixed)
+            surface = None
+            if hasattr(gs, "surfaces") and hasattr(gs.surfaces, "Default") and color is not None:
+                surface = gs.surfaces.Default(color=_normalize_rgb(color))
             # NOTE: Genesis morphs/entities don't currently accept a friendly name in this call
             # signature, so `name` is kept for future USD mapping only.
             _ = name
-            return self.scene.add_entity(morph)  # type: ignore[misc]
+            return self.scene.add_entity(morph, surface=surface)  # type: ignore[misc]
 
         raise RuntimeError("Genesis Box morph is not available in this version.")
 

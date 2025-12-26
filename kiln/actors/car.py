@@ -14,6 +14,7 @@ class CarBlockConfig:
     # Rigid body
     size: tuple[float, float, float] = (1.0, 0.5, 0.3)
     mass: float = 1.0
+    color: tuple[float, float, float] | tuple[float, float, float, float] | None = None
 
     # Control
     control_mode: ControlMode = ControlMode.KINEMATIC
@@ -54,7 +55,13 @@ class CarBlock:
         self.name = name
         self.config = config or CarBlockConfig()
 
-        self.entity = sim.add_box(name=name, size=self.config.size, position=position, mass=self.config.mass)
+        self.entity = sim.add_box(
+            name=name,
+            size=self.config.size,
+            position=position,
+            mass=self.config.mass,
+            color=self.config.color,
+        )
 
         self._yaw = float(self.config.initial_yaw)
         self._target_speed = 0.0

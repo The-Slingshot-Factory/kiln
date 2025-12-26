@@ -61,7 +61,11 @@ def main() -> int:
     cam = None
     gif_path: Path | None = None
     if args.gif is not None:
-        import imageio.v2 as imageio  # lazy import; only needed for gif export
+        import importlib
+
+        # Lazy import; only needed for gif export.
+        # Use dynamic import to avoid type-checker issues in environments without imageio installed.
+        imageio = importlib.import_module("imageio.v2")
 
         gif_path = Path(args.gif)
         gif_path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +81,11 @@ def main() -> int:
         )
         gif_writer = imageio.get_writer(str(gif_path), mode="I", duration=1.0 / float(args.gif_fps))
 
+    # Colors (category-coded)
+    car_color = (1.0, 0.2, 0.2)  # red
+    npc_color = (0.2, 0.6, 1.0)  # blue
+    obstacle_color = (0.75, 0.75, 0.75)  # light gray
+
     # Simple obstacles (static-ish blocks).
     obstacles = []
     for i in range(8):
@@ -84,19 +93,31 @@ def main() -> int:
         y = rng.uniform(-4.0, 4.0)
         try:
             obstacles.append(
-                sim.add_box(name=f"obstacle_{i}", size=(0.6, 0.6, 0.6), position=(x, y, 0.3), mass=0.0)
+                sim.add_box(
+                    name=f"obstacle_{i}",
+                    size=(0.6, 0.6, 0.6),
+                    position=(x, y, 0.3),
+                    mass=0.0,
+                    color=obstacle_color,
+                )
             )
         except Exception:
             # Fallback if this Genesis version doesn't support static bodies via mass=0.
             obstacles.append(
-                sim.add_box(name=f"obstacle_{i}", size=(0.6, 0.6, 0.6), position=(x, y, 0.3), mass=1.0)
+                sim.add_box(
+                    name=f"obstacle_{i}",
+                    size=(0.6, 0.6, 0.6),
+                    position=(x, y, 0.3),
+                    mass=1.0,
+                    color=obstacle_color,
+                )
             )
 
     car = CarBlock(
         sim,
         name="car",
         position=(0.0, 0.0, 0.15),
-        config=CarBlockConfig(control_mode=control_mode),
+        config=CarBlockConfig(control_mode=control_mode, color=car_color),
     )
 
     npcs: list[NPCBlock] = []
@@ -112,6 +133,7 @@ def main() -> int:
                 roam_xy_min=(-5.0, -5.0),
                 roam_xy_max=(5.0, 5.0),
                 cruise_speed=2.0,
+                color=npc_color,
             ),
             rng=random.Random(args.seed + 1000 + i),
         )
