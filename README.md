@@ -38,6 +38,37 @@ python3 examples/genesis_demo.py
 
 ---
 
+## 📦 Env bundles (USD + `env.json`) for GUI → Gym workflows
+
+Kiln’s intended pipeline is:
+
+- Author geometry in **USD** (`.usda/.usd`) in the GUI
+- Export a **bundle directory** next to the USD file
+- Load that bundle at runtime to construct a Genesis-backed env (then `scene.reset()` per episode)
+
+### Bundle layout (v1)
+
+```
+my_env.kiln_env/
+├── scene.usda   # geometry (copied from your USD file)
+└── env.json     # semantics (world import options, primitives, spawn points)
+```
+
+### Export from the UI
+- Right click a `.usd/.usda` file in the project browser
+- Select **“Export Kiln Env Bundle…”**
+- Kiln creates `<stem>.kiln_env/` containing `scene.<ext>` and a template `env.json`
+
+### Run the sample bundle (CPU)
+
+```bash
+python3 examples/genesis_bundle_demo.py --bundle examples/env_bundles/basic_v1 --gs-backend cpu
+```
+
+### Notes
+- **Versioning**: `env.json` contains `schema_version` (currently `1`). We’ll bump this when the schema evolves.
+- **USD deps**: Loading the USD world requires `pxr` (install with `pip install -e \".[usd]\"` or use `environment.yml`).
+- **Genesis deps**: Install Genesis via `pip install -e \".[sim]\"` (or use `environment.yml`).
 ### Option B: Pip (UI-only)
 
 ### 1. Install (UI)

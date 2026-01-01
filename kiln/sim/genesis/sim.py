@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import platform
 import sys
@@ -196,7 +197,7 @@ class GenesisSim:
         self._vel6_cache.clear()
         self._force6_cache.clear()
 
-    def create_programmatic_scene(self) -> Any:
+    def create_programmatic_scene(self, *, with_default_ground: bool = True) -> Any:
         """
         Create a minimal scene programmatically (no USD).
 
@@ -224,13 +225,14 @@ class GenesisSim:
         self._vel6_cache.clear()
         self._force6_cache.clear()
 
-        # Add a ground plane if available.
-        try:
-            # Dark ground so colored blocks stand out in rendered demos.
-            self.add_ground_plane(color=(0.18, 0.18, 0.18))
-        except Exception:
-            # Ground is optional; demo can still run in free space.
-            pass
+        if with_default_ground:
+            # Add a ground plane if available.
+            try:
+                # Dark ground so colored blocks stand out in rendered demos.
+                self.add_ground_plane(color=(0.18, 0.18, 0.18))
+            except Exception:
+                # Ground is optional; demo can still run in free space.
+                pass
 
         return scene
 
@@ -245,17 +247,155 @@ class GenesisSim:
 
     def load_scene_from_usd(self, usd_path: str | Path) -> Any:
         """
-        Placeholder for the upcoming Kiln flow:
-        - UI authors `.usda/.usd`
-        - Kiln exports a Gymnasium env backed by Genesis
+        Minimal USD loader (v1):
+        - Create an empty Genesis scene
+        - Load the USD geometry as a single fixed mesh entity
 
-        TODO(usd): Implement USD -> Genesis translation (prims -> entities, colliders, materials).
-        TODO(usd): Define a stable mapping scheme (USD prim paths -> actor/entity IDs).
+        This supports the GUI→bundle→runtime pipeline, but does not yet implement
+        per-prim semantics (that lives in the env.json sidecar).
         """
-        raise NotImplementedError(
-            "USD-driven Genesis scenes are not implemented yet. "
-            "Use create_programmatic_scene() for now."
-        )
+        if self._gs is None:
+            self.init()
+        gs = self._gs
+
+        self.create_programmatic_scene(with_default_ground=False)
+        if self.scene is None:
+            raise RuntimeError("Scene is not created.")
+
+        usd_path = Path(usd_path)
+        if not usd_path.exists():
+            raise FileNotFoundError(str(usd_path))
+
+        try:
+            morph = gs.morphs.Mesh(file=str(usd_path), fixed=True)
+        except ImportError as e:
+            raise ImportError(
+                "Failed to load USD. Install USD deps (e.g. `pip install -e \".[usd]\"`) and ensure `pxr` is available."
+            ) from e
+
+        self.scene.add_entity(morph)  # type: ignore[misc]
+        return self.scene
+
+    def load_env_bundle(self, bundle_dir: str | Path, *, env_filename: str = "env.json") -> tuple[dict[str, Any], dict[str, Any]]:
+        """
+        Load a Kiln env bundle directory (USD geometry + env.json semantics) into this GenesisSim.
+
+        Returns:
+        - entities_by_id: mapping from primitive IDs (and 'world' when enabled) to Genesis entities
+        - spawn_points: mapping name -> Pose-like dict (pos/quat) from the bundle
+        """
+        from kiln.envio.bundle import EnvBundleError, PrimitiveSpec, load_env_bundle as _load_env_bundle
+
+        bundle_root = Path(bundle_dir)
+        bundle = _load_env_bundle(bundle_root, env_filename=env_filename)
+
+        # Build a fresh scene without default ground; the bundle's world/primitives define geometry.
+        self.create_programmatic_scene(with_default_ground=False)
+        if self.scene is None:
+            raise RuntimeError("Scene is not created.")
+        if self._gs is None:
+            self.init()
+        gs = self._gs
+
+        entities: dict[str, Any] = {}
+
+        # 1) Static world (USD as one fixed entity)
+        if bundle.world.enabled:
+            usd_path = bundle.resolve_scene_path(bundle_root)
+            try:
+                morph = gs.morphs.Mesh(
+                    file=str(usd_path),
+                    pos=bundle.world.pose.pos,
+                    quat=bundle.world.pose.quat,
+                    fixed=bool(bundle.world.fixed),
+                    collision=bool(bundle.world.collision),
+                    visualization=bool(bundle.world.visualization),
+                    scale=float(bundle.world.scale),
+                )
+            except ImportError as e:
+                raise ImportError(
+                    "Failed to load USD. Install USD deps (e.g. `pip install -e \".[usd]\"`) and ensure `pxr` is available."
+                ) from e
+
+            entities["world"] = self.scene.add_entity(morph)  # type: ignore[misc]
+
+        # 2) Primitives
+        def _spawn_primitive(p: PrimitiveSpec) -> Any:
+            fixed = bool(p.fixed) if p.fixed is not None else True
+            mass = p.mass
+            color = p.color
+
+            if p.shape == "plane":
+                normal = p.normal if p.normal is not None else (0.0, 0.0, 1.0)
+                return self.add_ground_plane(
+                    position=p.pose.pos,
+                    normal=normal,
+                    fixed=True,  # plane is effectively static in v1
+                    collision=p.collision,
+                    visualization=p.visualization,
+                    color=color,
+                )
+
+            if p.shape == "box":
+                if p.size is None:
+                    raise EnvBundleError(f"Missing size for box: {p.id}")
+                # If mass is provided, match it; otherwise fall back to Genesis default material.
+                m = 0.0 if fixed else (mass if mass is not None else None)
+                return self.add_box(
+                    name=p.id,
+                    size=p.size,
+                    position=p.pose.pos,
+                    quat=p.pose.quat,
+                    mass=m,
+                    collision=p.collision,
+                    visualization=p.visualization,
+                    color=color,
+                )
+
+            if p.shape == "sphere":
+                if p.radius is None:
+                    raise EnvBundleError(f"Missing radius for sphere: {p.id}")
+                m = 0.0 if fixed else (mass if mass is not None else None)
+                return self.add_sphere(
+                    name=p.id,
+                    radius=float(p.radius),
+                    position=p.pose.pos,
+                    quat=p.pose.quat,
+                    mass=m,
+                    collision=p.collision,
+                    visualization=p.visualization,
+                    color=color,
+                )
+
+            if p.shape == "cylinder":
+                if p.radius is None or p.height is None:
+                    raise EnvBundleError(f"Missing radius/height for cylinder: {p.id}")
+                m = 0.0 if fixed else (mass if mass is not None else None)
+                return self.add_cylinder(
+                    name=p.id,
+                    radius=float(p.radius),
+                    height=float(p.height),
+                    position=p.pose.pos,
+                    quat=p.pose.quat,
+                    mass=m,
+                    collision=p.collision,
+                    visualization=p.visualization,
+                    color=color,
+                )
+
+            raise EnvBundleError(f"Unsupported primitive shape: {p.shape!r}")
+
+        for prim in bundle.primitives:
+            if prim.id in entities:
+                raise EnvBundleError(f"Duplicate entity id in bundle: {prim.id!r}")
+            entities[prim.id] = _spawn_primitive(prim)
+
+        # Build once after adding all entities.
+        self.build()
+
+        # Return spawn points as raw JSON-like dicts for caller convenience.
+        spawn_points = {k: v.to_json() for k, v in bundle.spawn_points.items()}
+        return entities, spawn_points
 
     # ----------------------------
     # Simulation stepping
@@ -275,6 +415,10 @@ class GenesisSim:
         self,
         position: tuple[float, float, float] = (0.0, 0.0, 0.0),
         *,
+        normal: tuple[float, float, float] = (0.0, 0.0, 1.0),
+        fixed: bool = True,
+        collision: bool = True,
+        visualization: bool = True,
         color: tuple[float, float, float] | tuple[float, float, float, float] | None = None,
     ) -> Any:
         if self.scene is None:
@@ -283,7 +427,13 @@ class GenesisSim:
 
         # Genesis 0.3.x: scene.add_entity(morph=gs.morphs.Plane(...))
         if hasattr(gs, "morphs") and hasattr(gs.morphs, "Plane"):
-            morph = gs.morphs.Plane(pos=position)
+            morph = gs.morphs.Plane(
+                pos=position,
+                normal=normal,
+                fixed=bool(fixed),
+                collision=bool(collision),
+                visualization=bool(visualization),
+            )
             surface = None
             if hasattr(gs, "surfaces") and hasattr(gs.surfaces, "Default") and color is not None:
                 surface = gs.surfaces.Default(color=_normalize_rgb(color))
@@ -297,7 +447,10 @@ class GenesisSim:
         name: str | None = None,
         size: tuple[float, float, float] = (1.0, 0.5, 0.3),
         position: tuple[float, float, float] = (0.0, 0.0, 0.15),
-        mass: float = 1.0,
+        quat: tuple[float, float, float, float] | None = None,
+        mass: float | None = 1.0,
+        collision: bool = True,
+        visualization: bool = True,
         color: tuple[float, float, float] | tuple[float, float, float, float] | None = None,
     ) -> Any:
         if self.scene is None:
@@ -306,17 +459,126 @@ class GenesisSim:
 
         # Genesis 0.3.x: scene.add_entity(morph=gs.morphs.Box(pos=..., size=..., fixed=...))
         if hasattr(gs, "morphs") and hasattr(gs.morphs, "Box"):
-            fixed = bool(mass <= 0.0)
-            morph = gs.morphs.Box(pos=position, size=size, fixed=fixed)
+            fixed = False if mass is None else bool(mass <= 0.0)
+            morph_kwargs: dict[str, Any] = {
+                "pos": position,
+                "size": size,
+                "fixed": fixed,
+                "collision": bool(collision),
+                "visualization": bool(visualization),
+            }
+            if quat is not None:
+                morph_kwargs["quat"] = tuple(float(q) for q in quat)
+            morph = gs.morphs.Box(**morph_kwargs)
+
+            material = None
+            if (mass is not None) and (mass > 0.0) and (not fixed):
+                vol = float(size[0]) * float(size[1]) * float(size[2])
+                if vol <= 0.0:
+                    raise ValueError(f"Invalid box size/volume: size={size!r}")
+                rho = float(mass) / vol
+                material = gs.materials.Rigid(rho=rho)
             surface = None
             if hasattr(gs, "surfaces") and hasattr(gs.surfaces, "Default") and color is not None:
                 surface = gs.surfaces.Default(color=_normalize_rgb(color))
             # NOTE: Genesis morphs/entities don't currently accept a friendly name in this call
             # signature, so `name` is kept for future USD mapping only.
             _ = name
-            return self.scene.add_entity(morph, surface=surface)  # type: ignore[misc]
+            return self.scene.add_entity(morph, material=material, surface=surface)  # type: ignore[misc]
 
         raise RuntimeError("Genesis Box morph is not available in this version.")
+
+    def add_sphere(
+        self,
+        *,
+        name: str | None = None,
+        radius: float = 0.5,
+        position: tuple[float, float, float] = (0.0, 0.0, 0.5),
+        quat: tuple[float, float, float, float] | None = None,
+        mass: float | None = 1.0,
+        collision: bool = True,
+        visualization: bool = True,
+        color: tuple[float, float, float] | tuple[float, float, float, float] | None = None,
+    ) -> Any:
+        if self.scene is None:
+            raise RuntimeError("Scene is not created.")
+        gs = self._gs or _import_genesis()
+
+        if hasattr(gs, "morphs") and hasattr(gs.morphs, "Sphere"):
+            fixed = False if mass is None else bool(mass <= 0.0)
+            morph_kwargs: dict[str, Any] = {
+                "pos": position,
+                "radius": float(radius),
+                "fixed": fixed,
+                "collision": bool(collision),
+                "visualization": bool(visualization),
+            }
+            if quat is not None:
+                morph_kwargs["quat"] = tuple(float(q) for q in quat)
+            morph = gs.morphs.Sphere(**morph_kwargs)
+
+            material = None
+            if (mass is not None) and (mass > 0.0) and (not fixed):
+                vol = (4.0 / 3.0) * math.pi * float(radius) ** 3
+                if vol <= 0.0:
+                    raise ValueError(f"Invalid sphere radius/volume: radius={radius!r}")
+                rho = float(mass) / vol
+                material = gs.materials.Rigid(rho=rho)
+
+            surface = None
+            if hasattr(gs, "surfaces") and hasattr(gs.surfaces, "Default") and color is not None:
+                surface = gs.surfaces.Default(color=_normalize_rgb(color))
+            _ = name
+            return self.scene.add_entity(morph, material=material, surface=surface)  # type: ignore[misc]
+
+        raise RuntimeError("Genesis Sphere morph is not available in this version.")
+
+    def add_cylinder(
+        self,
+        *,
+        name: str | None = None,
+        radius: float = 0.5,
+        height: float = 1.0,
+        position: tuple[float, float, float] = (0.0, 0.0, 0.5),
+        quat: tuple[float, float, float, float] | None = None,
+        mass: float | None = 1.0,
+        collision: bool = True,
+        visualization: bool = True,
+        color: tuple[float, float, float] | tuple[float, float, float, float] | None = None,
+    ) -> Any:
+        if self.scene is None:
+            raise RuntimeError("Scene is not created.")
+        gs = self._gs or _import_genesis()
+
+        if hasattr(gs, "morphs") and hasattr(gs.morphs, "Cylinder"):
+            fixed = False if mass is None else bool(mass <= 0.0)
+            morph_kwargs: dict[str, Any] = {
+                "pos": position,
+                "radius": float(radius),
+                "height": float(height),
+                "fixed": fixed,
+                "collision": bool(collision),
+                "visualization": bool(visualization),
+            }
+            if quat is not None:
+                morph_kwargs["quat"] = tuple(float(q) for q in quat)
+            morph = gs.morphs.Cylinder(**morph_kwargs)
+
+            material = None
+            if (mass is not None) and (mass > 0.0) and (not fixed):
+                vol = math.pi * float(radius) ** 2 * float(height)
+                if vol <= 0.0:
+                    raise ValueError(f"Invalid cylinder radius/height/volume: radius={radius!r} height={height!r}")
+                rho = float(mass) / vol
+                material = gs.materials.Rigid(rho=rho)
+
+            surface = None
+            if hasattr(gs, "surfaces") and hasattr(gs.surfaces, "Default") and color is not None:
+                surface = gs.surfaces.Default(color=_normalize_rgb(color))
+            _ = name
+            return self.scene.add_entity(morph, material=material, surface=surface)  # type: ignore[misc]
+
+        raise RuntimeError("Genesis Cylinder morph is not available in this version.")
 
     # ----------------------------
     # Query / control helpers

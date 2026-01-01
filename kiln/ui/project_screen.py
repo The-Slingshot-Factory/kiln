@@ -5,6 +5,8 @@ from PyQt6.QtCore import Qt, QDir
 from pathlib import Path
 
 from .viewport import ViewportWidget
+from kiln.envio.export import export_bundle_from_usd
+from kiln.envio.bundle import EnvBundleError
 
 class ProjectScreen(QWidget):
     def __init__(self):
@@ -62,11 +64,37 @@ class ProjectScreen(QWidget):
         if not index.isValid(): return
 
         menu = QMenu()
+        export_action = None
+        path = self.model.filePath(index)
+        if (not self.model.isDir(index)) and path.lower().endswith((".usd", ".usda", ".usdc", ".usdz")):
+            export_action = menu.addAction("Export Kiln Env Bundle…")
         delete_action = menu.addAction("Delete")
         action = menu.exec(self.tree.viewport().mapToGlobal(position))
 
+        if export_action is not None and action == export_action:
+            self._export_env_bundle(path)
+            return
+
         if action == delete_action:
             self._delete_file(index)
+
+    def _export_env_bundle(self, usd_path: str) -> None:
+        src = Path(usd_path)
+        bundle_dir = src.parent / f"{src.stem}.kiln_env"
+        try:
+            export_bundle_from_usd(src, bundle_dir, overwrite=False)
+        except EnvBundleError as e:
+            QMessageBox.critical(self, "Export failed", str(e))
+            return
+        except Exception as e:
+            QMessageBox.critical(self, "Export failed", f"Unexpected error: {e!r}")
+            return
+
+        QMessageBox.information(
+            self,
+            "Export complete",
+            f"Env bundle created:\n{bundle_dir}\n\nFiles:\n- scene{src.suffix.lower()}\n- env.json",
+        )
 
     def _delete_file(self, index):
         path = self.model.filePath(index)
