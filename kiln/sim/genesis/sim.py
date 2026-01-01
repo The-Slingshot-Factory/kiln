@@ -1,8 +1,72 @@
 from __future__ import annotations
 
+import os
+import platform
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+
+def _maybe_prepend_wsl_libcuda_path(*, reexec: bool = False) -> None:
+    """
+    WSL CUDA quirk:
+
+    Some WSL setups end up with a *Linux* NVIDIA driver `libcuda.so` present under
+    `/lib/x86_64-linux-gnu/` which can cause Taichi/Genesis CUDA init to fail with:
+      CUDA_ERROR_NO_DEVICE: no CUDA-capable device is detected while calling init (cuInit)
+
+    Prepending the WSL shim path `/usr/lib/wsl/lib` ensures we pick up the correct
+    WSL-provided libcuda shim.
+
+    This is a no-op on non-WSL systems.
+
+    IMPORTANT: In practice, Taichi's CUDA initialization may require this path to be present
+    at *process start* (glibc caches the loader search path). When `reexec=True`, this
+    function will `exec()` the current Python process with an updated `LD_LIBRARY_PATH`
+    to make the fix reliable.
+    """
+
+    wsl_dir = Path("/usr/lib/wsl/lib")
+    if not wsl_dir.exists():
+        return
+
+    # Be conservative: only apply if we appear to be running under a WSL kernel.
+    try:
+        osrelease = Path("/proc/sys/kernel/osrelease").read_text().strip().lower()
+    except Exception:
+        osrelease = platform.release().strip().lower()
+
+    if ("microsoft" not in osrelease) and ("wsl" not in osrelease):
+        return
+
+    wsl_path = str(wsl_dir)
+    ld = os.environ.get("LD_LIBRARY_PATH", "")
+    parts = [p for p in ld.split(":") if p]
+
+    if parts and parts[0] == wsl_path:
+        return
+
+    if wsl_path in parts:
+        parts = [wsl_path] + [p for p in parts if p != wsl_path]
+    else:
+        parts.insert(0, wsl_path)
+
+    new_ld = ":".join(parts)
+
+    if not reexec:
+        os.environ["LD_LIBRARY_PATH"] = new_ld
+        return
+
+    # Re-exec once to ensure the dynamic loader sees the updated LD_LIBRARY_PATH.
+    if os.environ.get("KILN_WSL_LIBCUDA_REEXECED") == "1":
+        os.environ["LD_LIBRARY_PATH"] = new_ld
+        return
+
+    env = os.environ.copy()
+    env["LD_LIBRARY_PATH"] = new_ld
+    env["KILN_WSL_LIBCUDA_REEXECED"] = "1"
+    os.execvpe(sys.executable, [sys.executable, *sys.argv], env)
 
 
 def _import_genesis():
@@ -31,6 +95,9 @@ class GenesisSimConfig:
     substeps: int = 1
     headless: bool = True
     seed: int | None = None
+    # Genesis backend selector. Common values: "cpu", "gpu", "cuda", "vulkan".
+    # If None, Genesis chooses its default backend for the platform.
+    backend: str | None = None
 
 
 @dataclass(frozen=True)
@@ -67,20 +134,60 @@ class GenesisSim:
     # Lifecycle / scene management
     # ----------------------------
     def init(self) -> None:
+        # Must happen before importing Genesis/Taichi so dynamic library resolution is correct.
+        # NOTE: On WSL + CUDA this may re-exec the process (once) to make the loader fix reliable.
+        want_cuda = (str(self.config.backend).strip().lower() if self.config.backend is not None else "") in {
+            "cuda",
+            "gpu",
+        }
+        _maybe_prepend_wsl_libcuda_path(reexec=want_cuda)
+
         gs = _import_genesis()
         self._gs = gs
 
         # Genesis typically requires an explicit init(). Keep this best-effort and permissive
         # across versions by trying a few common call signatures.
         if hasattr(gs, "init"):
-            try:
-                if self.config.seed is not None:
-                    gs.init(seed=self.config.seed)
+            init_kwargs: dict[str, Any] = {}
+            if self.config.seed is not None:
+                init_kwargs["seed"] = self.config.seed
+
+            if self.config.backend is not None:
+                b = str(self.config.backend).strip().lower()
+                # Prefer Genesis' own backend enum (varies by version). Try a few patterns.
+                backend_val: Any | None = None
+                if hasattr(gs, b):
+                    backend_val = getattr(gs, b)
                 else:
-                    gs.init()
+                    backend_enum = getattr(gs, "gs_backend", None)
+                    if backend_enum is not None and hasattr(backend_enum, b):
+                        backend_val = getattr(backend_enum, b)
+                    else:
+                        try:
+                            # Fallback to the canonical enum class in genesis.constants.
+                            from genesis.constants import backend as gs_backend  # type: ignore
+
+                            if hasattr(gs_backend, b):
+                                backend_val = getattr(gs_backend, b)
+                        except Exception:
+                            backend_val = None
+
+                # If we couldn't resolve, pass the string through (some versions may accept it).
+                init_kwargs["backend"] = backend_val if backend_val is not None else self.config.backend
+
+            try:
+                gs.init(**init_kwargs)
             except TypeError:
-                # Older/newer signatures: fall back to bare init.
-                gs.init()
+                # Older/newer signatures: fall back by dropping newer kwargs first.
+                if init_kwargs:
+                    init_kwargs.pop("backend", None)
+                try:
+                    if init_kwargs:
+                        gs.init(**init_kwargs)
+                    else:
+                        gs.init()
+                except TypeError:
+                    gs.init()
 
     def close(self) -> None:
         # Genesis doesn't always expose an explicit shutdown; keep as a no-op.
@@ -215,9 +322,21 @@ class GenesisSim:
     # Query / control helpers
     # ----------------------------
     def get_position(self, entity: Any) -> tuple[float, float, float]:
+        def _to_cpu_once(v: Any) -> Any:
+            # Avoid per-element CUDA sync when extracting floats from torch tensors.
+            try:
+                import torch  # type: ignore
+
+                if isinstance(v, torch.Tensor) and getattr(v, "device", None) is not None:
+                    if v.device.type != "cpu":
+                        return v.detach().to("cpu")
+            except Exception:
+                pass
+            return v
+
         for attr in ("position", "pos"):
             if hasattr(entity, attr):
-                v = getattr(entity, attr)
+                v = _to_cpu_once(getattr(entity, attr))
                 try:
                     return (float(v[0]), float(v[1]), float(v[2]))
                 except Exception:
@@ -225,7 +344,7 @@ class GenesisSim:
 
         for method in ("get_position", "get_pos"):
             if hasattr(entity, method):
-                v = getattr(entity, method)()
+                v = _to_cpu_once(getattr(entity, method)())
                 return (float(v[0]), float(v[1]), float(v[2]))
 
         raise AttributeError("Entity has no readable position.")
@@ -249,6 +368,22 @@ class GenesisSim:
         key = id(entity)
         wx, wy, wz = w_xyz
         vx, vy, vz, _, _, _ = self._vel6_cache.get(key, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+        vel6 = (float(vx), float(vy), float(vz), float(wx), float(wy), float(wz))
+        self._set_dofs_velocity6(entity, vel6)
+        self._vel6_cache[key] = vel6
+
+    def set_linear_angular_velocity(
+        self,
+        entity: Any,
+        v_xyz: tuple[float, float, float],
+        w_xyz: tuple[float, float, float],
+    ) -> None:
+        """
+        Set linear+angular velocity in one call (avoids two `set_dofs_velocity` calls per step).
+        """
+        key = id(entity)
+        vx, vy, vz = v_xyz
+        wx, wy, wz = w_xyz
         vel6 = (float(vx), float(vy), float(vz), float(wx), float(wy), float(wz))
         self._set_dofs_velocity6(entity, vel6)
         self._vel6_cache[key] = vel6
@@ -323,5 +458,75 @@ class GenesisSim:
                 return RaycastHit(hit=True, collider=res)
 
         return RaycastHit(hit=False)
+
+    # ----------------------------
+    # Diagnostics
+    # ----------------------------
+    def runtime_info(self, *, sample_contact_entity: Any | None = None) -> dict[str, Any]:
+        """
+        Best-effort runtime info to help debug CPU vs GPU execution.
+
+        Notes:
+        - Genesis has changed APIs across versions; this method intentionally uses permissive
+          introspection (attributes may be missing).
+        - `sample_contact_entity` can be any entity that supports `get_contacts()`. If available,
+          we also report the torch device of contact tensors.
+        """
+        info: dict[str, Any] = {}
+
+        gs = self._gs
+        if gs is None:
+            try:
+                gs = _import_genesis()
+                self._gs = gs
+            except Exception as e:
+                info["genesis_import_error"] = repr(e)
+                return info
+
+        # Genesis version
+        info["genesis_version"] = (
+            getattr(gs, "__version__", None)
+            or getattr(gs, "version", None)
+            or getattr(getattr(gs, "VERSION", None), "__str__", lambda: None)()
+        )
+
+        # Best-effort backend / device hints (names vary across releases).
+        for attr in ("backend", "device", "platform", "compute_backend", "renderer"):
+            v = getattr(gs, attr, None)
+            if v is not None:
+                info[f"genesis_{attr}"] = str(v)
+
+        if self.scene is not None:
+            for attr in ("backend", "device"):
+                v = getattr(self.scene, attr, None)
+                if v is not None:
+                    info[f"scene_{attr}"] = str(v)
+
+        # Torch + CUDA info (Genesis depends on torch; still keep permissive).
+        try:
+            import torch  # type: ignore
+
+            info["torch_version"] = getattr(torch, "__version__", None)
+            info["torch_cuda_available"] = bool(torch.cuda.is_available())
+            info["torch_cuda_version"] = getattr(getattr(torch, "version", None), "cuda", None)
+            if torch.cuda.is_available():
+                idx = int(torch.cuda.current_device())
+                info["torch_cuda_device"] = idx
+                info["torch_cuda_name"] = str(torch.cuda.get_device_name(idx))
+        except Exception as e:
+            info["torch_error"] = repr(e)
+
+        # If available, report where contact tensors live (cpu vs cuda).
+        if sample_contact_entity is not None and hasattr(sample_contact_entity, "get_contacts"):
+            try:
+                contacts = sample_contact_entity.get_contacts()
+                if isinstance(contacts, dict):
+                    ga = contacts.get("geom_a")
+                    if ga is not None and hasattr(ga, "device"):
+                        info["contacts_device"] = str(ga.device)
+            except Exception as e:
+                info["contacts_device_error"] = repr(e)
+
+        return info
 
 

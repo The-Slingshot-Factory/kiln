@@ -1,16 +1,21 @@
 name: kiln-dev
 channels:
   - pytorch
+  - nvidia
   - conda-forge
+  - defaults
 dependencies:
   # Use 3.10 for broad compatibility with ML/sim wheels.
   - python=3.10
   - pip
 
-  # PyTorch (CPU by default). If you want CUDA, replace `cpuonly` with
-  # `pytorch-cuda=<your_cuda_version>` and add the `nvidia` channel.
-  - pytorch>=2.2
-  - cpuonly
+  # PyTorch (CUDA-enabled). Install CUDA runtime via conda so Genesis can use `gs.cuda`.
+  # If you want a smaller CPU-only env, replace `pytorch-cuda=...` with `cpuonly`.
+  # NOTE: Genesis 0.3.x warns on torch<2.8.0, but CUDA-enabled torch is still sufficient
+  # for running Genesis on `gs.cuda` in practice. If/when conda provides >=2.8 builds for
+  # our Python version, we can bump this pin.
+  - pytorch=2.5.1
+  - pytorch-cuda=12.4
 
   # Install Kiln + optional extras via pip so dependencies stay in one place.
   - pip:

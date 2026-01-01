@@ -117,7 +117,12 @@ class NPCBlock(CarBlock):
         self._stuck_counter = 0
         return self._goal_xy
 
-    def policy_step(self, obstacles: Iterable[Any] | None = None) -> DiscreteAction:
+    def policy_step(
+        self,
+        obstacles: Iterable[Any] | None = None,
+        *,
+        positions_by_id: dict[int, tuple[float, float, float]] | None = None,
+    ) -> DiscreteAction:
         """
         Roaming heuristic:
         - Pick a random goal in bounds
@@ -128,7 +133,15 @@ class NPCBlock(CarBlock):
         if self._goal_xy is None:
             self.pick_new_goal()
 
-        px, py = self._get_xy()
+        if positions_by_id is not None:
+            p = positions_by_id.get(id(self.entity))
+            if p is not None:
+                px, py = float(p[0]), float(p[1])
+                self._last_xy = (px, py)
+            else:
+                px, py = self._get_xy()
+        else:
+            px, py = self._get_xy()
         target_x, target_y = self._goal_xy
 
         # Waypoint tracking (if path planned)
@@ -182,7 +195,7 @@ class NPCBlock(CarBlock):
         # In the pathfinding demo, pass only dynamic obstacles (car + other pedestrians),
         # since buildings are handled by the nav grid.
         if obstacles is not None:
-            avoid = self._avoid_with_proximity(obstacles)
+            avoid = self._avoid_with_proximity(obstacles, self_xy=(px, py), positions_by_id=positions_by_id)
             if avoid is not None:
                 return avoid
 
@@ -223,7 +236,8 @@ class NPCBlock(CarBlock):
             # Update yaw the same way the base kinematic controller does.
             self._yaw += self._target_yaw_rate * dtf
 
-            px, py = self._get_xy()
+            # Use cached position (updated by policy_step / spawn) to avoid another Genesis pose read.
+            px, py = self._last_xy
             fx = math.cos(self._yaw)
             fy = math.sin(self._yaw)
             vx = self._target_speed * fx
@@ -235,12 +249,10 @@ class NPCBlock(CarBlock):
             if self._nav_grid.is_blocked(c_next):
                 # Stop at building boundary. Keep turning so the policy can reorient.
                 self._target_speed = 0.0
-                self.sim.set_linear_velocity(self.entity, (0.0, 0.0, 0.0))
-                self.sim.set_angular_velocity(self.entity, (0.0, 0.0, float(self._target_yaw_rate)))
+                self.sim.set_linear_angular_velocity(self.entity, (0.0, 0.0, 0.0), (0.0, 0.0, float(self._target_yaw_rate)))
                 return
 
-            self.sim.set_linear_velocity(self.entity, (vx, vy, 0.0))
-            self.sim.set_angular_velocity(self.entity, (0.0, 0.0, float(self._target_yaw_rate)))
+            self.sim.set_linear_angular_velocity(self.entity, (vx, vy, 0.0), (0.0, 0.0, float(self._target_yaw_rate)))
             return
 
         super().step_control(dt)
@@ -293,8 +305,17 @@ class NPCBlock(CarBlock):
             return DiscreteAction.TURN_LEFT
         return DiscreteAction.TURN_LEFT if self._rng.random() < 0.5 else DiscreteAction.TURN_RIGHT
 
-    def _avoid_with_proximity(self, obstacles: Iterable[Any]) -> DiscreteAction | None:
-        px, py, _ = self.sim.get_position(self.entity)
+    def _avoid_with_proximity(
+        self,
+        obstacles: Iterable[Any],
+        *,
+        self_xy: tuple[float, float] | None = None,
+        positions_by_id: dict[int, tuple[float, float, float]] | None = None,
+    ) -> DiscreteAction | None:
+        if self_xy is None:
+            px, py = self._get_xy()
+        else:
+            px, py = float(self_xy[0]), float(self_xy[1])
         fx = math.cos(self._yaw)
         fy = math.sin(self._yaw)
 
@@ -304,10 +325,16 @@ class NPCBlock(CarBlock):
         for obs in obstacles:
             if obs is self.entity:
                 continue
-            try:
-                ox, oy, _ = self.sim.get_position(obs)
-            except Exception:
-                continue
+            if positions_by_id is not None:
+                p = positions_by_id.get(id(obs))
+                if p is None:
+                    continue
+                ox, oy = float(p[0]), float(p[1])
+            else:
+                try:
+                    ox, oy, _ = self.sim.get_position(obs)
+                except Exception:
+                    continue
             dx, dy = ox - px, oy - py
             dist = math.hypot(dx, dy)
             if dist <= 1e-9:

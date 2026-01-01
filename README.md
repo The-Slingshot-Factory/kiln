@@ -17,6 +17,13 @@ conda env create -f environment.yml
 conda activate kiln-dev
 ```
 
+If you already have the env and want to update it (recommended when `environment.yml` changes):
+
+```bash
+conda env update -n kiln-dev -f environment.yml --prune
+conda activate kiln-dev
+```
+
 Run the UI:
 
 ```bash
@@ -142,6 +149,20 @@ If OpenGL is not initializing at all, ensure you have the Mesa drivers installed
 
 ```bash
 sudo apt-get install libgl1-mesa-dri libglx-mesa0 libegl1-mesa mesa-utils
+```
+
+### 4. WSL2 + Genesis CUDA backend (`gs.cuda`) fails with `CUDA_ERROR_NO_DEVICE`
+On some WSL2 setups, Taichi/Genesis can accidentally load a *non-WSL* `libcuda.so` and fail at init with:
+
+- `CUDA Error CUDA_ERROR_NO_DEVICE: no CUDA-capable device is detected while calling init (cuInit)`
+
+Kiln works around this by ensuring `/usr/lib/wsl/lib` is preferred when you select `--gs-backend cuda`.
+
+If you run into this outside of Kiln’s wrapper, the manual workaround is:
+
+```bash
+export LD_LIBRARY_PATH=/usr/lib/wsl/lib:$LD_LIBRARY_PATH
+python3 examples/genesis_demo.py --gs-backend cuda
 ```
 
 ---
