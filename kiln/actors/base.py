@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Actor interfaces used to build higher-level environments on top of a simulator backend."""
+
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -8,6 +10,8 @@ from .actions import DiscreteAction
 
 @dataclass(frozen=True)
 class ActorState:
+    """Minimal kinematic state for an actor (intended for RL observation construction)."""
+
     position: tuple[float, float, float]
     yaw: float
     linear_speed: float

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""NPC actor built on top of `CarBlock` with a simple heuristic roaming policy."""
+
 import math
 import random
 from dataclasses import dataclass
@@ -12,6 +14,8 @@ from .pathfinding import NavGrid, astar, cells_to_waypoints, simplify_path_cells
 
 @dataclass(frozen=True)
 class NPCBlockConfig(CarBlockConfig):
+    """Configuration for `NPCBlock` (roaming bounds, avoidance, and navigation tuning)."""
+
     # Roaming (filled in during npc-roaming todo)
     roam_xy_min: tuple[float, float] = (-5.0, -5.0)
     roam_xy_max: tuple[float, float] = (5.0, 5.0)
@@ -57,6 +61,7 @@ class NPCBlock(CarBlock):
         rng: random.Random | None = None,
         nav_grid: NavGrid | None = None,
     ):
+        """Create an NPC actor and initialize its roaming/navigation state."""
         self.npc_config = config or NPCBlockConfig()
         super().__init__(sim, name=name, position=position, config=self.npc_config)
 
@@ -76,16 +81,18 @@ class NPCBlock(CarBlock):
         self._last_xy: tuple[float, float] = (float(position[0]), float(position[1]))
 
     def set_roam_bounds(self, xy_min: tuple[float, float], xy_max: tuple[float, float]) -> None:
-        # Will be used by the roaming heuristic.
+        """Set the roaming bounds used for sampling random goals (XY)."""
         self._roam_xy_min = xy_min
         self._roam_xy_max = xy_max
 
     def set_nav_grid(self, nav_grid: NavGrid | None) -> None:
+        """Set or clear a navigation grid (A* waypoints will be generated when present)."""
         self._nav_grid = nav_grid
         self._waypoints_xy = []
         self._waypoint_idx = 0
 
     def pick_new_goal(self) -> tuple[float, float]:
+        """Sample a new goal and (optionally) build an A* path to it if a nav grid is set."""
         xmin, ymin = self._roam_xy_min
         xmax, ymax = self._roam_xy_max
         # If we have a nav grid, sample a reachable goal and build a path.

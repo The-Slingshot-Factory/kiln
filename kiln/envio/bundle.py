@@ -1,6 +1,22 @@
 from __future__ import annotations
 
+"""
+Env bundle schema + JSON IO.
+
+An **env bundle** is a directory containing:
+- a USD file (geometry), e.g. `scene.usda`
+- an `env.json` sidecar (simulation semantics)
+
+This module defines a small, backend-agnostic, JSON-serializable schema (v1) for the
+`env.json` sidecar and provides strict-but-friendly validation when reading JSON.
+
+Notes:
+- All JSON is expected to be plain types (dict/list/str/int/float/bool/null).
+- Pose quaternions are stored as (w, x, y, z) to match Genesis conventions.
+"""
+
 import json
+from typing import cast
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Mapping, MutableMapping, Sequence, TypeAlias
@@ -13,10 +29,13 @@ Color: TypeAlias = RGB | RGBA
 
 
 class EnvBundleError(RuntimeError):
+    """Raised for env-bundle schema/IO errors (missing fields, invalid types, etc)."""
+
     pass
 
 
 def _as_float(x: Any, *, ctx: str) -> float:
+    """Parse `x` as a float or raise `EnvBundleError` with context."""
     try:
         return float(x)
     except Exception as e:
@@ -24,24 +43,32 @@ def _as_float(x: Any, *, ctx: str) -> float:
 
 
 def _as_bool(x: Any, *, ctx: str) -> bool:
+    """Parse `x` as a bool or raise `EnvBundleError` with context."""
     if isinstance(x, bool):
         return x
     raise EnvBundleError(f"Expected a boolean for {ctx}, got {x!r}")
 
 
 def _as_str(x: Any, *, ctx: str) -> str:
+    """Parse `x` as a string or raise `EnvBundleError` with context."""
     if isinstance(x, str):
         return x
     raise EnvBundleError(f"Expected a string for {ctx}, got {x!r}")
 
 
 def _as_vec3(x: Any, *, ctx: str) -> Vec3:
+    """Parse `x` as a length-3 vector of floats."""
     if not isinstance(x, (list, tuple)) or len(x) != 3:
         raise EnvBundleError(f"Expected a 3-list for {ctx}, got {x!r}")
-    return (_as_float(x[0], ctx=f"{ctx}[0]"), _as_float(x[1], ctx=f"{ctx}[1]"), _as_float(x[2], ctx=f"{ctx}[2]"))
+    return (
+        _as_float(x[0], ctx=f"{ctx}[0]"),
+        _as_float(x[1], ctx=f"{ctx}[1]"),
+        _as_float(x[2], ctx=f"{ctx}[2]"),
+    )
 
 
 def _as_quat4(x: Any, *, ctx: str) -> Quat4:
+    """Parse `x` as a (w, x, y, z) quaternion."""
     if not isinstance(x, (list, tuple)) or len(x) != 4:
         raise EnvBundleError(f"Expected a 4-list (w,x,y,z) for {ctx}, got {x!r}")
     return (
@@ -53,6 +80,7 @@ def _as_quat4(x: Any, *, ctx: str) -> Quat4:
 
 
 def _as_color(x: Any, *, ctx: str) -> Color:
+    """Parse `x` as RGB or RGBA floats."""
     if not isinstance(x, (list, tuple)) or (len(x) not in (3, 4)):
         raise EnvBundleError(f"Expected an RGB/RGBA list for {ctx}, got {x!r}")
     vals = tuple(_as_float(v, ctx=f"{ctx}[{i}]") for i, v in enumerate(x))
@@ -63,11 +91,14 @@ def _as_color(x: Any, *, ctx: str) -> Color:
 
 @dataclass(frozen=True)
 class Pose:
+    """Rigid pose: translation + quaternion rotation."""
+
     pos: Vec3 = (0.0, 0.0, 0.0)
     quat: Quat4 = (1.0, 0.0, 0.0, 0.0)
 
     @staticmethod
     def from_json(obj: Any, *, ctx: str) -> "Pose":
+        """Parse a Pose from a JSON object (or return identity pose for null)."""
         if obj is None:
             return Pose()
         if not isinstance(obj, Mapping):
@@ -77,11 +108,21 @@ class Pose:
         return Pose(pos=pos, quat=quat)
 
     def to_json(self) -> dict[str, list[float]]:
-        return {"pos": [float(self.pos[0]), float(self.pos[1]), float(self.pos[2])], "quat": [float(q) for q in self.quat]}
+        """Convert to a JSON-serializable dict."""
+        return {
+            "pos": [float(self.pos[0]), float(self.pos[1]), float(self.pos[2])],
+            "quat": [float(q) for q in self.quat],
+        }
 
 
 @dataclass(frozen=True)
 class WorldSpec:
+    """
+    How to import the USD scene file.
+
+    v1 behavior: import the entire USD file as a single entity (often used as static world).
+    """
+
     enabled: bool = True
     pose: Pose = field(default_factory=Pose)
     fixed: bool = True
@@ -91,6 +132,7 @@ class WorldSpec:
 
     @staticmethod
     def from_json(obj: Any, *, ctx: str) -> "WorldSpec":
+        """Parse WorldSpec from JSON (or return defaults for null)."""
         if obj is None:
             return WorldSpec()
         if not isinstance(obj, Mapping):
@@ -120,6 +162,16 @@ PrimitiveShape: TypeAlias = Literal["plane", "box", "sphere", "cylinder"]
 
 @dataclass(frozen=True)
 class PrimitiveSpec:
+    """
+    Primitive entity defined in `env.json`.
+
+    Shape-specific fields:
+    - box: `size` (Vec3)
+    - sphere: `radius` (float)
+    - cylinder: `radius` + `height` (float)
+    - plane: optional `normal` (Vec3)
+    """
+
     id: str
     shape: PrimitiveShape
     pose: Pose = field(default_factory=Pose)
@@ -136,14 +188,16 @@ class PrimitiveSpec:
 
     @staticmethod
     def from_json(obj: Any, *, ctx: str) -> "PrimitiveSpec":
+        """Parse PrimitiveSpec from JSON."""
         if not isinstance(obj, Mapping):
             raise EnvBundleError(f"Expected an object for {ctx}, got {obj!r}")
         pid = _as_str(obj.get("id", ""), ctx=f"{ctx}.id")
         if not pid:
             raise EnvBundleError(f"Missing non-empty {ctx}.id")
-        shape = _as_str(obj.get("shape", ""), ctx=f"{ctx}.shape")
-        if shape not in ("plane", "box", "sphere", "cylinder"):
-            raise EnvBundleError(f"Unsupported {ctx}.shape={shape!r}")
+        shape_raw = _as_str(obj.get("shape", ""), ctx=f"{ctx}.shape")
+        if shape_raw not in ("plane", "box", "sphere", "cylinder"):
+            raise EnvBundleError(f"Unsupported {ctx}.shape={shape_raw!r}")
+        shape: PrimitiveShape = cast(PrimitiveShape, shape_raw)
 
         fixed = obj.get("fixed", None)
         if fixed is not None:
@@ -195,7 +249,7 @@ class PrimitiveSpec:
 
         return PrimitiveSpec(
             id=pid,
-            shape=shape,  # type: ignore[arg-type]
+            shape=shape,
             pose=pose,
             fixed=fixed,
             mass=mass,
@@ -240,6 +294,8 @@ class PrimitiveSpec:
 
 @dataclass(frozen=True)
 class EnvBundleV1:
+    """Env bundle schema v1 for `env.json`."""
+
     schema_version: int = 1
     scene_file: str = "scene.usda"
     world: WorldSpec = field(default_factory=WorldSpec)
@@ -247,6 +303,12 @@ class EnvBundleV1:
     spawn_points: Mapping[str, Pose] = field(default_factory=lambda: {"default": Pose(pos=(0.0, 0.0, 0.5))})
 
     def resolve_scene_path(self, bundle_dir: Path) -> Path:
+        """
+        Resolve `scene_file` within `bundle_dir` and prevent directory traversal.
+
+        Raises:
+            EnvBundleError: if `scene_file` is absolute or escapes the bundle dir.
+        """
         if Path(self.scene_file).is_absolute():
             raise EnvBundleError(f"scene_file must be a relative path, got {self.scene_file!r}")
         bundle_root = bundle_dir.resolve()
@@ -257,6 +319,7 @@ class EnvBundleV1:
 
     @staticmethod
     def from_json(obj: Any, *, ctx: str = "env") -> "EnvBundleV1":
+        """Parse EnvBundleV1 from a JSON object."""
         if not isinstance(obj, Mapping):
             raise EnvBundleError(f"Expected a JSON object for {ctx}, got {obj!r}")
         schema_version = int(obj.get("schema_version", 0))
@@ -292,6 +355,7 @@ class EnvBundleV1:
         )
 
     def to_json(self) -> dict[str, Any]:
+        """Convert to a JSON-serializable dict."""
         spawn_points: dict[str, Any] = {k: v.to_json() for k, v in self.spawn_points.items()}
         return {
             "schema_version": int(self.schema_version),
@@ -306,6 +370,19 @@ EnvBundle: TypeAlias = EnvBundleV1
 
 
 def load_env_bundle(bundle_dir: str | Path, *, env_filename: str = "env.json") -> EnvBundle:
+    """
+    Load and validate an env bundle directory.
+
+    Args:
+        bundle_dir: Bundle directory path (contains `env.json` and optionally a USD file).
+        env_filename: Name of the JSON sidecar file within the bundle.
+
+    Returns:
+        Parsed `EnvBundleV1`.
+
+    Raises:
+        EnvBundleError: If JSON is missing/invalid or references a missing scene file.
+    """
     bundle_path = Path(bundle_dir)
     env_path = bundle_path / env_filename
     if not env_path.exists():
@@ -329,6 +406,11 @@ def save_env_bundle(
     *,
     env_filename: str = "env.json",
 ) -> Path:
+    """
+    Write an env bundle JSON sidecar (`env.json`).
+
+    Note: this function does not write/copy the USD scene file; that is handled by exporters.
+    """
     bundle_path = Path(bundle_dir)
     bundle_path.mkdir(parents=True, exist_ok=True)
     env_path = bundle_path / env_filename

@@ -1,30 +1,82 @@
+from __future__ import annotations
+
+"""
+OpenGL viewport widget.
+
+This is a lightweight viewport used by the UI to preview USD geometry.
+It is intentionally simple (no materials/textures), and renders either:
+- a fallback splash cube, or
+- USD meshes as point clouds (when `pxr` is available).
+"""
+
+from typing import Any
+
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-from PyQt6.QtCore import Qt, QTimer
-from OpenGL.GL import *
-from OpenGL.GLU import *
+from OpenGL.GL import (
+    GL_COLOR_BUFFER_BIT,
+    GL_COLOR_MATERIAL,
+    GL_DEPTH_BUFFER_BIT,
+    GL_DEPTH_TEST,
+    GL_LIGHT0,
+    GL_LIGHTING,
+    GL_LINES,
+    GL_MODELVIEW,
+    GL_POINTS,
+    GL_POINT_SMOOTH,
+    GL_POSITION,
+    GL_PROJECTION,
+    GL_QUADS,
+    glBegin,
+    glClear,
+    glClearColor,
+    glColor3f,
+    glDisable,
+    glEnable,
+    glEnd,
+    glLightfv,
+    glLineWidth,
+    glLoadIdentity,
+    glMatrixMode,
+    glOrtho,
+    glPointSize,
+    glPopMatrix,
+    glPushMatrix,
+    glRotatef,
+    glScalef,
+    glTranslatef,
+    glVertex3f,
+    glViewport,
+)
+from OpenGL.GLU import gluPerspective
 
 try:
     from pxr import Usd, UsdGeom
     HAS_USD = True
 except ImportError:
     HAS_USD = False
-    print("Warning: 'pxr' module not found. USD features disabled.")
+    Usd = None  # type: ignore[assignment]
+    UsdGeom = None  # type: ignore[assignment]
 
 class ViewportWidget(QOpenGLWidget):
-    def __init__(self, parent=None):
+    """A basic 3D viewport widget for previewing USD scenes."""
+
+    def __init__(self, parent: Any | None = None):
         super().__init__(parent)
         self.rotation_x = 20
         self.rotation_y = -30
         self.gl_initialized = False
-        self.cached_meshes = [] # List of (points, color) tuples
+        self.cached_meshes: list[tuple[Any, tuple[float, float, float]]] = []  # (points, rgb)
         self.scene_loaded = False
         self.last_pos = None
 
-    def mousePressEvent(self, event):
+    def mousePressEvent(self, event) -> None:
+        """Start a drag-rotate gesture."""
         self.last_pos = event.pos()
 
-    def mouseMoveEvent(self, event):
-        if self.last_pos is None: return
+    def mouseMoveEvent(self, event) -> None:
+        """Update rotation while dragging."""
+        if self.last_pos is None:
+            return
         dx = event.x() - self.last_pos.x()
         dy = event.y() - self.last_pos.y()
         
@@ -33,10 +85,11 @@ class ViewportWidget(QOpenGLWidget):
         self.last_pos = event.pos()
         self.update()
 
-    def mouseReleaseEvent(self, event):
+    def mouseReleaseEvent(self, event) -> None:
+        """End a drag-rotate gesture."""
         self.last_pos = None
 
-    def initializeGL(self):
+    def initializeGL(self) -> None:
         """Standard OpenGL initialization."""
         try:
             self.gl_initialized = True
@@ -52,19 +105,22 @@ class ViewportWidget(QOpenGLWidget):
             print(f"OpenGL Initialization failed: {e}")
             self.gl_initialized = False
 
-    def resizeGL(self, w, h):
+    def resizeGL(self, w: int, h: int) -> None:
         """Handle widget resize."""
-        if not self.gl_initialized: return
-        if h == 0: h = 1
+        if not self.gl_initialized:
+            return
+        if h == 0:
+            h = 1
         glViewport(0, 0, w, h)
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
         gluPerspective(45, w / h, 0.01, 1000.0) # Increased range
         glMatrixMode(GL_MODELVIEW)
 
-    def paintGL(self):
+    def paintGL(self) -> None:
         """Draw the 3D scene."""
-        if not self.gl_initialized: return
+        if not self.gl_initialized:
+            return
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
@@ -87,7 +143,8 @@ class ViewportWidget(QOpenGLWidget):
         # Draw XYZ Orientation Gizmo (Top Left)
         self.draw_gizmo()
 
-    def draw_grid(self):
+    def draw_grid(self) -> None:
+        """Draw a simple floor grid in the XZ plane."""
         glDisable(GL_LIGHTING)
         glLineWidth(1.0)
         glBegin(GL_LINES)
@@ -108,13 +165,14 @@ class ViewportWidget(QOpenGLWidget):
         glEnd()
         glEnable(GL_LIGHTING)
 
-    def draw_gizmo(self):
+    def draw_gizmo(self) -> None:
+        """Draw an XYZ orientation gizmo in the top-left corner."""
         w = self.width()
         h = self.height()
-        size = 100
+        size_px = 100
         
         # Setup viewport for top-left (OpenGL coords start bottom-left)
-        glViewport(0, h - size, size, size)
+        glViewport(0, h - size_px, size_px, size_px)
         
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
@@ -181,7 +239,8 @@ class ViewportWidget(QOpenGLWidget):
         glEnd()
         glLineWidth(1.0)
 
-    def load_scene(self, path):
+    def load_scene(self, path: str) -> None:
+        """Load a USD scene from disk and cache mesh points for drawing."""
         if not HAS_USD:
             print("Cannot load USD scene: 'pxr' module missing.")
             return
@@ -223,7 +282,8 @@ class ViewportWidget(QOpenGLWidget):
         except Exception as e:
             print(f"Error loading USD stage: {e}")
 
-    def draw_usd_meshes(self):
+    def draw_usd_meshes(self) -> None:
+        """Draw cached USD meshes as a simple point cloud."""
         # Scale down slightly as USD units can be large (cm vs m)
         glPushMatrix()
         glScalef(0.1, 0.1, 0.1) 
@@ -240,12 +300,13 @@ class ViewportWidget(QOpenGLWidget):
         
         glPopMatrix()
 
-    def update_rotation(self):
+    def update_rotation(self) -> None:
+        """Small demo helper: slowly spin the camera and repaint."""
         self.rotation_x += 0.5
         self.rotation_y += 0.5
         self.update()  # Trigger repaint
 
-    def draw_cube(self):
+    def draw_cube(self) -> None:
         """Draw a simple 3D cube."""
         glBegin(GL_QUADS)
         

@@ -18,3 +18,7 @@ recent_projects.txt
 
 # Example outputs
 examples/renders/
+
+# Docs
+site/
+.mkdocs_cache/

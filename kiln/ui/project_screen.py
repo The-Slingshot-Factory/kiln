@@ -1,7 +1,12 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QSplitter, 
-                             QTreeView, QLabel, QFrame, QMenu, QMessageBox)
+from __future__ import annotations
+
+"""Project workspace screen (file browser + viewport)."""
+
+from typing import Any
+
+from PyQt6.QtWidgets import QFrame, QMenu, QMessageBox, QSplitter, QTreeView, QVBoxLayout, QWidget
 from PyQt6.QtGui import QFileSystemModel
-from PyQt6.QtCore import Qt, QDir
+from PyQt6.QtCore import QDir, Qt
 from pathlib import Path
 
 from .viewport import ViewportWidget
@@ -9,17 +14,20 @@ from kiln.envio.export import export_bundle_from_usd
 from kiln.envio.bundle import EnvBundleError
 
 class ProjectScreen(QWidget):
-    def __init__(self):
+    """Main project workspace: tree view (left) and viewport (right)."""
+
+    def __init__(self) -> None:
         super().__init__()
-        self.project_path = None
+        self.project_path: Path | None = None
         self._init_ui()
 
-    def set_project(self, path):
+    def set_project(self, path: str | Path) -> None:
+        """Set the current project directory (root of the project browser)."""
         self.project_path = Path(path)
         self.model.setRootPath(str(self.project_path))
         self.tree.setRootIndex(self.model.index(str(self.project_path)))
 
-    def _init_ui(self):
+    def _init_ui(self) -> None:
         # Set layout
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -59,9 +67,10 @@ class ProjectScreen(QWidget):
         # Set initial sizes for splitter
         self.splitter.setSizes([200, 800])
 
-    def _on_context_menu(self, position):
+    def _on_context_menu(self, position) -> None:
         index = self.tree.indexAt(position)
-        if not index.isValid(): return
+        if not index.isValid():
+            return
 
         menu = QMenu()
         export_action = None
@@ -79,6 +88,7 @@ class ProjectScreen(QWidget):
             self._delete_file(index)
 
     def _export_env_bundle(self, usd_path: str) -> None:
+        """Export `<stem>.kiln_env/` next to a USD file and write a template `env.json`."""
         src = Path(usd_path)
         bundle_dir = src.parent / f"{src.stem}.kiln_env"
         try:
@@ -96,7 +106,7 @@ class ProjectScreen(QWidget):
             f"Env bundle created:\n{bundle_dir}\n\nFiles:\n- scene{src.suffix.lower()}\n- env.json",
         )
 
-    def _delete_file(self, index):
+    def _delete_file(self, index) -> None:
         path = self.model.filePath(index)
         msg = QMessageBox()
         msg.setWindowTitle("Delete File")
@@ -110,7 +120,7 @@ class ProjectScreen(QWidget):
             else:
                 self.model.remove(index)
 
-    def _on_selection_changed(self, selected, deselected):
+    def _on_selection_changed(self, selected: Any, deselected: Any) -> None:
         indexes = selected.indexes()
         if indexes:
             # Only look at the first column (col 0) which is the name

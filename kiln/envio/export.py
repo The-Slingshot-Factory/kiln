@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""
+Env bundle exporters.
+
+Today we only support a simple exporter used by the UI:
+- copy a USD file into a bundle dir as `scene.<ext>`
+- write a template `env.json` sidecar
+"""
+
 import shutil
 from pathlib import Path
 
@@ -21,6 +29,16 @@ def export_bundle_from_usd(
     Create an env bundle directory from a USD file.
 
     This is intended for GUI use (author in USD, export bundle for Gym/env runtime).
+
+    Args:
+        source_usd_path: Path to an input USD file.
+        bundle_dir: Output directory to create (typically ends with `.kiln_env/`).
+        env_filename: Name of the JSON sidecar to write (default: `env.json`).
+        scene_filename: Optional output USD filename (defaults to `scene.<ext>`).
+        overwrite: If true and the output directory exists, clear it first.
+
+    Returns:
+        The created bundle directory path.
     """
     src = Path(source_usd_path)
     if not src.exists():
@@ -30,18 +48,14 @@ def export_bundle_from_usd(
 
     out_dir = Path(bundle_dir)
     if out_dir.exists():
-        if not overwrite:
-            raise EnvBundleError(f"Bundle dir already exists: {out_dir}")
         if not out_dir.is_dir():
             raise EnvBundleError(f"Bundle path exists but is not a directory: {out_dir}")
-        # overwrite=True: clear dir contents
-        for p in out_dir.iterdir():
-            if p.is_dir():
-                shutil.rmtree(p)
-            else:
-                p.unlink()
-    else:
-        out_dir.mkdir(parents=True, exist_ok=True)
+        if not overwrite:
+            raise EnvBundleError(f"Bundle dir already exists: {out_dir}")
+        # overwrite=True: clear the directory so we produce a clean bundle.
+        shutil.rmtree(out_dir)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     dst_scene_name = scene_filename or f"scene{src.suffix.lower()}"
     if Path(dst_scene_name).is_absolute():

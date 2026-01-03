@@ -38,6 +38,27 @@ python3 examples/genesis_demo.py
 
 ---
 
+## 📚 Docs (MkDocs)
+
+Kiln includes a MkDocs site (with `mkdocstrings`) for user + developer docs and an API reference.
+
+If you use the conda env from `environment.yml`, docs dependencies are already included.
+
+Serve docs locally:
+
+```bash
+python -m pip install -e ".[docs]"
+mkdocs serve
+```
+
+Build docs (outputs to `site/`):
+
+```bash
+mkdocs build
+```
+
+---
+
 ## 📦 Env bundles (USD + `env.json`) for GUI → Gym workflows
 
 Kiln’s intended pipeline is:

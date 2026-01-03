@@ -1,20 +1,35 @@
-import sys
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QPushButton, QFileDialog, QMessageBox, QInputDialog)
+from __future__ import annotations
+
+"""Welcome screen (project creation + recent projects)."""
+
+from typing import Any
+
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 from PyQt6.QtCore import Qt, pyqtSignal
 from pathlib import Path
 from ..constants import APP_NAME
 
 class WelcomeScreen(QWidget):
+    """Landing screen for creating/opening projects and selecting recents."""
+
     # Signals to communicate with the main controller
     project_opened = pyqtSignal(Path)
 
-    def __init__(self, config_manager):
+    def __init__(self, config_manager: Any):
         super().__init__()
         self.config_manager = config_manager
         self._init_ui()
 
-    def _init_ui(self):
+    def _init_ui(self) -> None:
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setContentsMargins(50, 50, 50, 50)
@@ -55,7 +70,8 @@ class WelcomeScreen(QWidget):
                 item_btn.clicked.connect(lambda checked, p=project_path: self._open_recent(p))
                 layout.addWidget(item_btn)
 
-    def _on_new_project(self):
+    def _on_new_project(self) -> None:
+        """Prompt for a project name and directory, create it, then emit `project_opened`."""
         name, ok = QInputDialog.getText(self, "New Project", "Enter project name:")
         if ok and name:
             parent_dir = QFileDialog.getExistingDirectory(self, "Select location for new project")
@@ -70,12 +86,14 @@ class WelcomeScreen(QWidget):
                     except Exception as e:
                         QMessageBox.critical(self, "Error", f"Failed to create project: {e}")
 
-    def _on_open_project(self):
+    def _on_open_project(self) -> None:
+        """Prompt for an existing project directory and emit `project_opened`."""
         path = QFileDialog.getExistingDirectory(self, "Select project folder")
         if path:
             self.project_opened.emit(Path(path))
 
-    def _open_recent(self, path):
+    def _open_recent(self, path: Path) -> None:
+        """Open a recent project, or remove it from recents if missing."""
         if path.exists():
             self.project_opened.emit(path)
         else:
@@ -83,8 +101,8 @@ class WelcomeScreen(QWidget):
             self.config_manager.remove_recent_project(path)
             self._refresh()
 
-    def _refresh(self):
-        # Clear the old layout
-        QWidget().setLayout(self.layout()) # Hack to unparent old layout
-        # Re-init UI
+    def _refresh(self) -> None:
+        """Rebuild the UI (used when the recent-project list changes)."""
+        # Clear the old layout: unparent it so widgets can be GC'd.
+        QWidget().setLayout(self.layout())  # Hack: unparent old layout
         self._init_ui()

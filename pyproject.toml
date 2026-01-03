@@ -23,6 +23,13 @@ usd = ["usd-core>=24.0"]
 # Genesis simulation backend (PyTorch must be installed separately per Genesis docs).
 sim = ["genesis-world>=0.3.10"]
 
+# Documentation site (MkDocs + Material theme + mkdocstrings API reference).
+docs = [
+  "mkdocs>=1.5",
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.25",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["kiln*"]

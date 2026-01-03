@@ -1,9 +1,12 @@
+from __future__ import annotations
+
+"""Kiln application entry point (Qt UI)."""
+
 import sys
-import os
+from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt
 import qdarkstyle
 
 from kiln.config import ConfigManager
@@ -12,7 +15,9 @@ from kiln.ui.project_screen import ProjectScreen
 from kiln.constants import APP_NAME
 
 class KilnApp(QMainWindow):
-    def __init__(self):
+    """Main application window and controller for switching between screens."""
+
+    def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.resize(1024, 768)
@@ -35,17 +40,20 @@ class KilnApp(QMainWindow):
 
         self.show_welcome()
 
-    def show_welcome(self):
+    def show_welcome(self) -> None:
+        """Switch to the welcome screen."""
         self.stack.setCurrentWidget(self.welcome_screen)
         self._setup_menu(is_project=False)
 
-    def open_project(self, path):
+    def open_project(self, path: Path) -> None:
+        """Open a project directory and switch to the project screen."""
         self.config_manager.add_recent_project(path)
         self.project_screen.set_project(path)
         self.stack.setCurrentWidget(self.project_screen)
         self._setup_menu(is_project=True)
 
-    def _setup_menu(self, is_project=False):
+    def _setup_menu(self, is_project: bool = False) -> None:
+        """Rebuild the menu bar based on whether a project is open."""
         self.menuBar().clear()
         
         file_menu = self.menuBar().addMenu("&File")
@@ -66,7 +74,8 @@ class KilnApp(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-    def _create_new_scene(self):
+    def _create_new_scene(self) -> None:
+        """Create a new empty USD scene in the current project (if USD is available)."""
         from PyQt6.QtWidgets import QInputDialog, QMessageBox
         
         name, ok = QInputDialog.getText(self, "New Scene", "Enter scene name:")
@@ -75,6 +84,9 @@ class KilnApp(QMainWindow):
                 name += ".usda"
             
             project_path = self.project_screen.project_path
+            if project_path is None:
+                QMessageBox.critical(self, "Error", "No project is currently open.")
+                return
             scene_path = project_path / name
             
             try:

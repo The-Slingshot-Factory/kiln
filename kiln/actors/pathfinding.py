@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Simple 2D grid pathfinding utilities (used by NPC roaming/navigation)."""
+
 import heapq
 import math
 from dataclasses import dataclass
@@ -27,6 +29,8 @@ class AABB:
 
 @dataclass(frozen=True)
 class NavGrid:
+    """A 2D occupancy grid in XY with fixed-size square cells."""
+
     xy_min: tuple[float, float]
     xy_max: tuple[float, float]
     cell_size: float
@@ -43,6 +47,16 @@ class NavGrid:
         obstacles: Iterable[AABB],
         inflate: float = 0.0,
     ) -> "NavGrid":
+        """
+        Build a NavGrid by rasterizing AABB obstacles onto a cell grid.
+
+        Args:
+            xy_min: World-space min bounds (x, y).
+            xy_max: World-space max bounds (x, y).
+            cell_size: Size of one cell in world units.
+            obstacles: AABBs in XY to mark as blocked.
+            inflate: Obstacle inflation radius (useful for accounting for agent radius).
+        """
         xmin, ymin = xy_min
         xmax, ymax = xy_max
         if xmax <= xmin or ymax <= ymin:
@@ -78,14 +92,17 @@ class NavGrid:
         )
 
     def in_bounds(self, c: Cell) -> bool:
+        """Return True if the cell index is inside the grid bounds."""
         ix, iy = c
         return 0 <= ix < self.width and 0 <= iy < self.height
 
     def is_blocked(self, c: Cell) -> bool:
+        """Return True if the cell is blocked by an obstacle."""
         ix, iy = c
         return self.blocked[iy][ix]
 
     def world_to_cell(self, x: float, y: float) -> Cell:
+        """Convert world-space XY to a clamped grid cell index."""
         xmin, ymin = self.xy_min
         ix = int(math.floor((x - xmin) / self.cell_size))
         iy = int(math.floor((y - ymin) / self.cell_size))
@@ -95,6 +112,7 @@ class NavGrid:
         return (ix, iy)
 
     def cell_center_world(self, c: Cell) -> tuple[float, float]:
+        """Return the world-space center of a cell."""
         ix, iy = c
         xmin, ymin = self.xy_min
         x = xmin + (ix + 0.5) * self.cell_size
@@ -102,6 +120,7 @@ class NavGrid:
         return (x, y)
 
     def neighbors4(self, c: Cell) -> Iterator[Cell]:
+        """Iterate 4-connected, unblocked neighbor cells."""
         ix, iy = c
         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             n = (ix + dx, iy + dy)

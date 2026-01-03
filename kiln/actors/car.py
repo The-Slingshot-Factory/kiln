@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""A simple controllable rigid-body \"car\" actor built from a box primitive."""
+
 import math
 from dataclasses import dataclass
 from enum import Enum
@@ -12,6 +14,8 @@ from ..sim.genesis.sim import GenesisSim
 
 @dataclass(frozen=True)
 class CarBlockConfig:
+    """Configuration for `CarBlock` (shape, mass, and control tuning)."""
+
     # Rigid body
     size: tuple[float, float, float] = (1.0, 0.5, 0.3)
     mass: float = 1.0
@@ -71,6 +75,7 @@ class CarBlock:
         position: tuple[float, float, float] = (0.0, 0.0, 0.15),
         config: CarBlockConfig | None = None,
     ):
+        """Create a new car block and spawn its underlying rigid body into the sim."""
         self.sim = sim
         self.name = name
         self.config = config or CarBlockConfig()
@@ -100,6 +105,7 @@ class CarBlock:
         self._active_collision_max_force: dict[int, float] = {}
 
     def apply_action(self, action: int | DiscreteAction) -> None:
+        """Apply a discrete action by updating target speed and/or yaw-rate."""
         a = DiscreteAction(int(action))
         self._last_action = a
 
@@ -115,6 +121,7 @@ class CarBlock:
             self._target_yaw_rate = -self.config.turn_rate
 
     def step_control(self, dt: float) -> None:
+        """Advance the control policy by one tick (to be called once per sim step)."""
         if self.config.control_mode == ControlMode.KINEMATIC:
             self._step_kinematic(dt)
             return
@@ -124,6 +131,7 @@ class CarBlock:
         raise ValueError(f"Unknown control_mode: {self.config.control_mode!r}")
 
     def state(self) -> ActorState:
+        """Return the actor's current state (for observation/debugging)."""
         p = self.sim.get_position(self.entity)
         return ActorState(
             position=p,

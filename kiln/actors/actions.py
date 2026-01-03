@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Common action/controls enums shared by actor implementations."""
+
 from enum import Enum, IntEnum
 
 

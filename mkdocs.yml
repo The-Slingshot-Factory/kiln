@@ -1,0 +1,60 @@
+site_name: Kiln
+site_description: Kiln documentation (UI, env bundles, Genesis backend, and API reference).
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+  - javascripts/mermaid-init.js
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+
+nav:
+  - Home: index.md
+  - User guide:
+      - Overview: user_guide/index.md
+      - Installation: user_guide/installation.md
+      - UI workflow: user_guide/ui_workflow.md
+      - Env bundles: user_guide/env_bundles.md
+      - Genesis backends: user_guide/genesis_backends.md
+      - Examples: user_guide/examples.md
+  - Developer guide:
+      - Overview: dev_guide/index.md
+      - Architecture: dev_guide/architecture.md
+      - Env bundle mapping: dev_guide/env_bundle_mapping.md
+      - Extending env bundles: dev_guide/extending_env_bundles.md
+  - API reference:
+      - Overview: reference/index.md
+      - Env IO: reference/envio.md
+      - Genesis: reference/genesis.md
+      - Actors: reference/actors.md
+      - UI: reference/ui.md
+
+

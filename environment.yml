@@ -19,6 +19,6 @@ dependencies:
 
   # Install Kiln + optional extras via pip so dependencies stay in one place.
   - pip:
-      - -e .[usd,sim]
+      - -e .[usd,sim,docs]
 
 
