@@ -33,12 +33,13 @@ Visual mapping (v1):
 
 ### Spawn points
 
-`spawn_points` are not instantiated as entities. They are returned as a dict:
+`spawn_points` are not instantiated as entities. They are returned on the typed result:
 
 ```python
-entities_by_id, spawn_points = sim.load_env_bundle(bundle_dir)
+loaded = sim.load_env_bundle(bundle_dir)
+spawn_points = loaded.spawn_points
 ```
 
-Each spawn point is a JSON-like dict with `pos` and `quat`.
+Each spawn point is a `Pose` with `pos` and `quat`.
 
 

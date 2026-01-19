@@ -409,10 +409,12 @@ def main() -> int:
                     return (x, y, z)
 
                 if control_mode == ControlMode.KINEMATIC:
-                    predicted_positions_by_id[id(car.entity)] = integrate_actor(car.entity, car._yaw, car._target_speed)  # type: ignore[attr-defined]
+                    predicted_positions_by_id[id(car.entity)] = integrate_actor(
+                        car.entity, car.heading_yaw(), car.target_speed()
+                    )
                     for npc in npcs:
-                        predicted_positions_by_id[id(npc.entity)] = integrate_actor(  # type: ignore[attr-defined]
-                            npc.entity, npc._yaw, npc._target_speed
+                        predicted_positions_by_id[id(npc.entity)] = integrate_actor(
+                            npc.entity, npc.heading_yaw(), npc.target_speed()
                         )
 
             if (not args.bench) and (step % 120 == 0):

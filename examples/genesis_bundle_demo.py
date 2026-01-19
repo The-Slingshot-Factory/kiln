@@ -26,8 +26,11 @@ def main() -> int:
 
     bundle_dir = Path(args.bundle)
     sim = GenesisSim(GenesisSimConfig(dt=1 / 60, substeps=8, headless=True, backend=args.gs_backend))
-    entities, spawn_points = sim.load_env_bundle(bundle_dir)
-    print(f"[bundle] dir={bundle_dir} entities={list(entities.keys())} spawn_points={list(spawn_points.keys())}")
+    loaded = sim.load_env_bundle(bundle_dir)
+    print(
+        f"[bundle] dir={bundle_dir} entities={list(loaded.entities_by_id.keys())} "
+        f"spawn_points={list(loaded.spawn_points.keys())}"
+    )
     print(f"[runtime] {sim.runtime_info()}")
 
     # Quick step loop for smoke testing.

@@ -4,9 +4,13 @@ import math
 import os
 import platform
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from kiln.envio.runtime import LoadedEnvBundle
 
 
 def _maybe_prepend_wsl_libcuda_path(*, reexec: bool = False) -> None:
@@ -88,6 +92,56 @@ def _normalize_rgb(color: tuple[float, ...]) -> tuple[float, ...]:
     if max(color) > 1.0:
         return tuple(float(c) / 255.0 for c in color)
     return tuple(float(c) for c in color)
+
+
+def _normalize_vec3(v: tuple[float, float, float]) -> tuple[float, float, float]:
+    n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+    if n <= 0.0:
+        return v
+    return (v[0] / n, v[1] / n, v[2] / n)
+
+
+def _quat_rotate(q: tuple[float, float, float, float], v: tuple[float, float, float]) -> tuple[float, float, float]:
+    """Rotate vector `v` by quaternion `q` (w, x, y, z)."""
+    qw, qx, qy, qz = q
+    vx, vy, vz = v
+
+    tx = 2.0 * (qy * vz - qz * vy)
+    ty = 2.0 * (qz * vx - qx * vz)
+    tz = 2.0 * (qx * vy - qy * vx)
+
+    cx = qy * tz - qz * ty
+    cy = qz * tx - qx * tz
+    cz = qx * ty - qy * tx
+
+    return (vx + qw * tx + cx, vy + qw * ty + cy, vz + qw * tz + cz)
+
+
+def _usd_stage_bounds(usd_path: Path) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    """Return stage bounds (min, max) in world coords, if USD is available."""
+    try:
+        from pxr import Usd, UsdGeom  # type: ignore
+    except Exception:
+        return None
+
+    stage = Usd.Stage.Open(str(usd_path))
+    if stage is None:
+        return None
+
+    try:
+        bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default"], useExtentsHint=True)
+        bbox = bbox_cache.ComputeWorldBound(stage.GetPseudoRoot())
+        bbox_range = bbox.ComputeAlignedRange()
+        if hasattr(bbox_range, "IsEmpty") and bbox_range.IsEmpty():
+            return None
+        min_pt = bbox_range.GetMin()
+        max_pt = bbox_range.GetMax()
+        return (
+            (float(min_pt[0]), float(min_pt[1]), float(min_pt[2])),
+            (float(max_pt[0]), float(max_pt[1]), float(max_pt[2])),
+        )
+    except Exception:
+        return None
 
 
 def _to_cpu_once(v: Any) -> Any:
@@ -346,6 +400,39 @@ class GenesisSim:
         gs = self._gs
 
         usd_path = bundle.resolve_scene_path(bundle_root)
+        bounds = _usd_stage_bounds(usd_path)
+        if bounds is not None and bool(bundle.world.fixed):
+            (min_pt, max_pt) = bounds
+            size = (max_pt[0] - min_pt[0], max_pt[1] - min_pt[1], max_pt[2] - min_pt[2])
+            min_dim = min(size)
+            if min_dim <= 1e-6:
+                axis = size.index(min_dim)
+                axis_normals = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+                normal_local = axis_normals[axis]
+                center_local = [0.0, 0.0, 0.0]
+                center_local[axis] = 0.5 * (min_pt[axis] + max_pt[axis])
+                scale = float(bundle.world.scale)
+                offset_local = (center_local[0] * scale, center_local[1] * scale, center_local[2] * scale)
+                pos_offset = _quat_rotate(bundle.world.pose.quat, offset_local)
+                pos = (
+                    float(bundle.world.pose.pos[0]) + pos_offset[0],
+                    float(bundle.world.pose.pos[1]) + pos_offset[1],
+                    float(bundle.world.pose.pos[2]) + pos_offset[2],
+                )
+                normal = _normalize_vec3(_quat_rotate(bundle.world.pose.quat, normal_local))
+                warnings.warn(
+                    f"USD world mesh appears planar (thickness≈{min_dim:.3g}); "
+                    "loading as a Plane to avoid zero-volume inertia warnings. "
+                    "Provide a closed mesh to keep Mesh behavior."
+                )
+                return self.add_ground_plane(
+                    position=pos,
+                    normal=normal,
+                    fixed=bool(bundle.world.fixed),
+                    collision=bool(bundle.world.collision),
+                    visualization=bool(bundle.world.visualization),
+                    color=None,
+                )
         try:
             morph = gs.morphs.Mesh(
                 file=str(usd_path),
@@ -428,15 +515,15 @@ class GenesisSim:
             case _:
                 raise EnvBundleError(f"Unsupported primitive shape: {prim.shape!r}")
 
-    def load_env_bundle(self, bundle_dir: str | Path, *, env_filename: str = "env.json") -> tuple[dict[str, Any], dict[str, Any]]:
+    def load_env_bundle(self, bundle_dir: str | Path, *, env_filename: str = "env.json") -> LoadedEnvBundle:
         """
         Load a Kiln env bundle directory (USD geometry + env.json semantics) into this GenesisSim.
 
         Returns:
-        - entities_by_id: mapping from primitive IDs (and 'world' when enabled) to Genesis entities
-        - spawn_points: mapping name -> Pose-like dict (pos/quat) from the bundle
+            LoadedEnvBundle: typed bundle contents + entity mapping.
         """
         from kiln.envio.bundle import EnvBundleError, load_env_bundle as _load_env_bundle
+        from kiln.envio.runtime import LoadedEnvBundle
 
         bundle_root = Path(bundle_dir)
         bundle = _load_env_bundle(bundle_root, env_filename=env_filename)
@@ -463,9 +550,14 @@ class GenesisSim:
         # Build once after adding all entities.
         self.build()
 
-        # Return spawn points as raw JSON-like dicts for caller convenience.
-        spawn_points = {k: v.to_json() for k, v in bundle.spawn_points.items()}
-        return entities, spawn_points
+        spawn_points = dict(bundle.spawn_points)
+        return LoadedEnvBundle(
+            bundle_dir=bundle_root,
+            bundle=bundle,
+            entities_by_id=entities,
+            world_entity=world_entity,
+            spawn_points=spawn_points,
+        )
 
     # ----------------------------
     # Simulation stepping

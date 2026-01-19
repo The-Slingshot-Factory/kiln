@@ -38,6 +38,26 @@ python3 examples/genesis_demo.py
 
 ---
 
+## 🧩 Backend API (GUI integration)
+
+For in-repo GUI work, prefer the stable import surface in `kiln.api`:
+
+```python
+from kiln.api import GenesisSim, GenesisSimConfig, load_env_bundle
+
+sim = GenesisSim(GenesisSimConfig(dt=1 / 60, substeps=8, headless=True, backend="cpu"))
+loaded = sim.load_env_bundle("examples/env_bundles/basic_v1")
+print(loaded.entities_by_id.keys(), loaded.spawn_points.keys())
+```
+
+Activate the dev env first:
+
+```bash
+conda activate kiln-dev
+```
+
+---
+
 ## 📚 Docs (MkDocs)
 
 Kiln includes a MkDocs site (with `mkdocstrings`) for user + developer docs and an API reference.

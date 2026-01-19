@@ -99,7 +99,9 @@ Internally, the loader:
 
 - imports the USD world as `gs.morphs.Mesh(...)` (when `world.enabled`)
 - spawns the JSON `primitives` using `GenesisSim.add_box/add_sphere/add_cylinder/add_ground_plane`
-- returns `(entities_by_id, spawn_points)`
+- returns a `LoadedEnvBundle` with:
+  - `entities_by_id`: mapping of ids -> Genesis entities
+  - `spawn_points`: mapping of names -> `Pose` (pos/quat)
 
 
 
