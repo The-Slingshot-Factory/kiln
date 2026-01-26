@@ -89,6 +89,8 @@ class ProjectScreen(QWidget):
             index = indexes[0] 
             path = self.model.filePath(index)
             if path.endswith(".usda") or path.endswith(".usd"):
-                # Pass to viewport for rendering
                 if hasattr(self.viewport, 'load_scene'):
                     self.viewport.load_scene(path)
+            else:
+                if hasattr(self.viewport, 'load_scene'):
+                    self.viewport.load_scene(None)
