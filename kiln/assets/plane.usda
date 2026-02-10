@@ -1,0 +1,19 @@
+#usda 1.0
+(
+    defaultPrim = "Plane"
+    upAxis = "Y"
+)
+
+def Xform "Plane" (
+    kind = "component"
+)
+{
+    def Mesh "Mesh"
+    {
+        float3[] displayColor = [(0.7, 0.7, 0.7)]
+        float3[] extent = [(-5, 0, -5), (5, 0, 5)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-5, 0, -5), (5, 0, -5), (5, 0, 5), (-5, 0, 5)]
+    }
+}
