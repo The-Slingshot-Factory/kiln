@@ -10,8 +10,8 @@ from PyQt6.QtCore import QDir, Qt
 from pathlib import Path
 
 from .viewport import ViewportWidget
-from kiln.envio.export import export_bundle_from_usd
-from kiln.envio.bundle import EnvBundleError
+from .properties import PropertiesWidget
+from .hierarchy import SceneHierarchyWidget
 
 class ProjectScreen(QWidget):
     """Main project workspace: tree view (left) and viewport (right)."""
@@ -60,12 +60,51 @@ class ProjectScreen(QWidget):
         
         self.splitter.addWidget(self.tree)
 
-        # Right Panel: Viewport
+        # Center Panel: Viewport
         self.viewport = ViewportWidget()
         self.splitter.addWidget(self.viewport)
         
-        # Set initial sizes for splitter
-        self.splitter.setSizes([200, 800])
+        # Right Panel: Workspace (Hierarchy + Properties)
+        self.right_panel = QSplitter(Qt.Orientation.Vertical)
+        self.right_panel.setHandleWidth(1)
+        
+        self.hierarchy = SceneHierarchyWidget()
+        self.right_panel.addWidget(self.hierarchy)
+        
+        self.properties = PropertiesWidget()
+        self.right_panel.addWidget(self.properties)
+        
+        self.splitter.addWidget(self.right_panel)
+        
+        # Connect signals
+        # 1. Viewport -> Hierarchy (Sync list)
+        self.viewport.objects_changed.connect(lambda: self.hierarchy.set_objects(self.viewport.objects))
+        
+        # 2. Viewport -> Workspace (Sync selection)
+        self.viewport.selection_changed.connect(self.hierarchy.select_object)
+        self.viewport.selection_changed.connect(self.properties.set_object)
+        
+        # 3. Hierarchy -> Viewport (Input selection)
+        self.hierarchy.object_selected.connect(self.viewport.select_object)
+        
+        # 4. Properties -> USD/Viewport (Input changes)
+        self.properties.property_changed.connect(self._on_property_changed)
+        
+        # Set initial sizes
+        self.splitter.setSizes([200, 600, 250])
+        self.right_panel.setSizes([300, 400])
+        
+    def _on_property_changed(self, property_name, value):
+        """Handle property changes from the properties panel"""
+        # Trigger viewport update and USD sync
+        if self.viewport.selected_object and self.viewport.stage:
+            self.viewport.selected_object.sync_usd(self.viewport.stage)
+            try:
+                self.viewport.stage.GetRootLayer().Save()
+            except Exception as e:
+                print(f"Failed to save USD stage: {e}")
+        # Trigger viewport redraw
+        self.viewport.update()
 
     def _on_context_menu(self, position) -> None:
         index = self.tree.indexAt(position)
@@ -127,6 +166,8 @@ class ProjectScreen(QWidget):
             index = indexes[0] 
             path = self.model.filePath(index)
             if path.endswith(".usda") or path.endswith(".usd"):
-                # Pass to viewport for rendering
                 if hasattr(self.viewport, 'load_scene'):
                     self.viewport.load_scene(path)
+            else:
+                if hasattr(self.viewport, 'load_scene'):
+                    self.viewport.load_scene(None)
