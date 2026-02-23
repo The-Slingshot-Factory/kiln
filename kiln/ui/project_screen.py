@@ -9,6 +9,7 @@ from PyQt6.QtGui import QFileSystemModel
 from PyQt6.QtCore import QDir, Qt
 from pathlib import Path
 
+from kiln.scene import Scene
 from .viewport import ViewportWidget
 from .properties import PropertiesWidget
 from .hierarchy import SceneHierarchyWidget
@@ -19,6 +20,10 @@ class ProjectScreen(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.project_path: Path | None = None
+
+        # The central Scene model
+        self.scene = Scene()
+
         self._init_ui()
 
     def set_project(self, path: str | Path) -> None:
@@ -60,8 +65,8 @@ class ProjectScreen(QWidget):
         
         self.splitter.addWidget(self.tree)
 
-        # Center Panel: Viewport
-        self.viewport = ViewportWidget()
+        # Center Panel: Viewport (receives scene reference)
+        self.viewport = ViewportWidget(self.scene)
         self.splitter.addWidget(self.viewport)
         
         # Right Panel: Workspace (Hierarchy + Properties)
@@ -76,18 +81,18 @@ class ProjectScreen(QWidget):
         
         self.splitter.addWidget(self.right_panel)
         
-        # Connect signals
-        # 1. Viewport -> Hierarchy (Sync list)
-        self.viewport.objects_changed.connect(lambda: self.hierarchy.set_objects(self.viewport.objects))
+        # Connect signals — everything flows through the Scene
+        # 1. Scene -> Hierarchy (Sync list)
+        self.scene.objects_changed.connect(lambda: self.hierarchy.set_objects(self.scene.objects))
         
-        # 2. Viewport -> Workspace (Sync selection)
-        self.viewport.selection_changed.connect(self.hierarchy.select_object)
-        self.viewport.selection_changed.connect(self.properties.set_object)
+        # 2. Scene -> Hierarchy + Properties (Sync selection)
+        self.scene.selection_changed.connect(self.hierarchy.select_object)
+        self.scene.selection_changed.connect(self.properties.set_object)
         
-        # 3. Hierarchy -> Viewport (Input selection)
-        self.hierarchy.object_selected.connect(self.viewport.select_object)
+        # 3. Hierarchy -> Scene (Input selection)
+        self.hierarchy.object_selected.connect(self.scene.select)
         
-        # 4. Properties -> USD/Viewport (Input changes)
+        # 4. Properties -> Scene (Input changes)
         self.properties.property_changed.connect(self._on_property_changed)
         
         # Set initial sizes
@@ -96,13 +101,7 @@ class ProjectScreen(QWidget):
         
     def _on_property_changed(self, property_name, value):
         """Handle property changes from the properties panel"""
-        # Trigger viewport update and USD sync
-        if self.viewport.selected_object and self.viewport.stage:
-            self.viewport.selected_object.sync_usd(self.viewport.stage)
-            try:
-                self.viewport.stage.GetRootLayer().Save()
-            except Exception as e:
-                print(f"Failed to save USD stage: {e}")
+        self.scene.sync_selected_to_usd()
         # Trigger viewport redraw
         self.viewport.update()
 
@@ -127,14 +126,12 @@ class ProjectScreen(QWidget):
             self._delete_file(index)
 
     def _export_env_bundle(self, usd_path: str) -> None:
-        """Export `<stem>.kiln_env/` next to a USD file and write a template `env.json`."""
+        """Export `<stem>.kiln_env/` next to a USD file."""
         src = Path(usd_path)
         bundle_dir = src.parent / f"{src.stem}.kiln_env"
         try:
+            from kiln.envio.export import export_bundle_from_usd
             export_bundle_from_usd(src, bundle_dir, overwrite=False)
-        except EnvBundleError as e:
-            QMessageBox.critical(self, "Export failed", str(e))
-            return
         except Exception as e:
             QMessageBox.critical(self, "Export failed", f"Unexpected error: {e!r}")
             return
@@ -162,12 +159,9 @@ class ProjectScreen(QWidget):
     def _on_selection_changed(self, selected: Any, deselected: Any) -> None:
         indexes = selected.indexes()
         if indexes:
-            # Only look at the first column (col 0) which is the name
             index = indexes[0] 
             path = self.model.filePath(index)
             if path.endswith(".usda") or path.endswith(".usd"):
-                if hasattr(self.viewport, 'load_scene'):
-                    self.viewport.load_scene(path)
+                self.scene.load(path)
             else:
-                if hasattr(self.viewport, 'load_scene'):
-                    self.viewport.load_scene(None)
+                self.scene.load(None)
