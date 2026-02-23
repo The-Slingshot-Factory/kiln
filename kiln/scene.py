@@ -220,15 +220,15 @@ class Scene(QObject):
     # Export
     # ------------------------------------------------------------------
 
-    def export_env_bundle(self, bundle_dir: str | Path, **kwargs) -> Path:
-        """Export the scene as a Kiln env bundle.
+    def export_env_bundle(self, output_dir: str | Path, **kwargs) -> Path:
+        """Export the scene as a Kiln MJCF bundle (XML + USD).
 
-        Delegates to :func:`kiln.envio.export.export_bundle_from_usd`.
+        Delegates to :func:`kiln.envio.export.export_scene_mjcf`.
         Raises if no scene is loaded.
         """
         if self.scene_path is None:
             raise RuntimeError("No scene is loaded – cannot export.")
 
-        from kiln.envio.export import export_bundle_from_usd
+        from kiln.envio.export import export_scene_mjcf
 
-        return export_bundle_from_usd(self.scene_path, bundle_dir, **kwargs)
+        return export_scene_mjcf(self, output_dir, **kwargs)

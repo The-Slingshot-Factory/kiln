@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PyQt6.QtWidgets import QFrame, QMenu, QMessageBox, QSplitter, QTreeView, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFileDialog, QFrame, QMenu, QMessageBox, QSplitter, QTreeView, QVBoxLayout, QWidget
 from PyQt6.QtGui import QFileSystemModel
 from PyQt6.QtCore import QDir, Qt
 from pathlib import Path
@@ -119,27 +119,39 @@ class ProjectScreen(QWidget):
         action = menu.exec(self.tree.viewport().mapToGlobal(position))
 
         if export_action is not None and action == export_action:
-            self._export_env_bundle(path)
+            self._export_env_bundle()
             return
 
         if action == delete_action:
             self._delete_file(index)
 
-    def _export_env_bundle(self, usd_path: str) -> None:
-        """Export `<stem>.kiln_env/` next to a USD file."""
-        src = Path(usd_path)
-        bundle_dir = src.parent / f"{src.stem}.kiln_env"
+    def _export_env_bundle(self) -> None:
+        """Prompt the user for an output folder and export the scene as MJCF + USD."""
+        if not self.scene.is_loaded:
+            QMessageBox.warning(self, "Export", "No scene is loaded. Select a USD file first.")
+            return
+
+        # Start the dialog in the scene's parent directory
+        start_dir = str(self.scene.scene_path.parent)
+
+        output_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Choose export directory",
+            start_dir,
+        )
+        if not output_dir:
+            return  # user cancelled
+
         try:
-            from kiln.envio.export import export_bundle_from_usd
-            export_bundle_from_usd(src, bundle_dir, overwrite=False)
+            xml_path = self.scene.export_env_bundle(output_dir)
         except Exception as e:
-            QMessageBox.critical(self, "Export failed", f"Unexpected error: {e!r}")
+            QMessageBox.critical(self, "Export failed", f"{e}")
             return
 
         QMessageBox.information(
             self,
             "Export complete",
-            f"Env bundle created:\n{bundle_dir}\n\nFiles:\n- scene{src.suffix.lower()}\n- env.json",
+            f"Kiln bundle exported to:\n{output_dir}\n\nFiles:\n- scene.xml\n- scene{self.scene.scene_path.suffix.lower()}",
         )
 
     def _delete_file(self, index) -> None:
