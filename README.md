@@ -106,6 +106,12 @@ my_env.kiln_env/
 python3 examples/genesis_bundle_demo.py --bundle examples/env_bundles/basic_v1 --gs-backend cpu
 ```
 
+### Run the sample XML scene (CPU)
+
+```bash
+python3 examples/genesis_xml_demo.py --xml examples/env_bundles/basic_v1/env.xml --gs-backend cpu
+```
+
 ### Notes
 - **Versioning**: `env.json` contains `schema_version` (currently `1`). We’ll bump this when the schema evolves.
 - **USD deps**: Loading the USD world requires `pxr` (install with `pip install -e \".[usd]\"` or use `environment.yml`).

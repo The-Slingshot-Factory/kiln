@@ -515,18 +515,10 @@ class GenesisSim:
             case _:
                 raise EnvBundleError(f"Unsupported primitive shape: {prim.shape!r}")
 
-    def load_env_bundle(self, bundle_dir: str | Path, *, env_filename: str = "env.json") -> LoadedEnvBundle:
-        """
-        Load a Kiln env bundle directory (USD geometry + env.json semantics) into this GenesisSim.
-
-        Returns:
-            LoadedEnvBundle: typed bundle contents + entity mapping.
-        """
-        from kiln.envio.bundle import EnvBundleError, load_env_bundle as _load_env_bundle
+    def _instantiate_loaded_bundle(self, *, bundle_root: Path, bundle: Any) -> LoadedEnvBundle:
+        """Instantiate scene entities from a parsed env-bundle object."""
+        from kiln.envio.bundle import EnvBundleError
         from kiln.envio.runtime import LoadedEnvBundle
-
-        bundle_root = Path(bundle_dir)
-        bundle = _load_env_bundle(bundle_root, env_filename=env_filename)
 
         # Build a fresh scene without default ground; the bundle's world/primitives define geometry.
         self.create_programmatic_scene(with_default_ground=False)
@@ -558,6 +550,32 @@ class GenesisSim:
             world_entity=world_entity,
             spawn_points=spawn_points,
         )
+
+    def load_env_bundle(self, bundle_dir: str | Path, *, env_filename: str = "env.json") -> LoadedEnvBundle:
+        """
+        Load a Kiln env bundle directory (USD geometry + env.json semantics) into this GenesisSim.
+
+        Returns:
+            LoadedEnvBundle: typed bundle contents + entity mapping.
+        """
+        from kiln.envio.bundle import load_env_bundle as _load_env_bundle
+
+        bundle_root = Path(bundle_dir)
+        bundle = _load_env_bundle(bundle_root, env_filename=env_filename)
+        return self._instantiate_loaded_bundle(bundle_root=bundle_root, bundle=bundle)
+
+    def load_env_xml_bundle(self, xml_path: str | Path) -> LoadedEnvBundle:
+        """
+        Load a MuJoCo-style Kiln XML file into this GenesisSim.
+
+        The XML is parsed into an EnvBundleV1-compatible object and then instantiated via
+        the same runtime path as `load_env_bundle(...)`.
+        """
+        from kiln.envio.xml_bundle import load_env_xml_bundle as _load_env_xml_bundle
+
+        xml_file = Path(xml_path)
+        bundle = _load_env_xml_bundle(xml_file)
+        return self._instantiate_loaded_bundle(bundle_root=xml_file.parent, bundle=bundle)
 
     # ----------------------------
     # Simulation stepping

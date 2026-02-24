@@ -9,6 +9,7 @@ from .actors.npc import NPCBlock, NPCBlockConfig
 from .envio.bundle import EnvBundleError, EnvBundleV1, Pose, PrimitiveSpec, WorldSpec, load_env_bundle, save_env_bundle
 from .envio.export import export_bundle_from_usd
 from .envio.runtime import LoadedEnvBundle
+from .envio.xml_bundle import load_env_xml_bundle
 from .sim.genesis import GenesisSim, GenesisSimConfig
 
 __all__ = [
@@ -30,5 +31,6 @@ __all__ = [
     "WorldSpec",
     "export_bundle_from_usd",
     "load_env_bundle",
+    "load_env_xml_bundle",
     "save_env_bundle",
 ]

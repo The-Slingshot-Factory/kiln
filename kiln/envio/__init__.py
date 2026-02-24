@@ -16,5 +16,6 @@ from .bundle import (  # noqa: F401
     load_env_bundle,
     save_env_bundle,
 )
+from .xml_bundle import load_env_xml_bundle  # noqa: F401
 
 
