@@ -1,5 +1,6 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QDoubleSpinBox, 
-                             QHBoxLayout, QGroupBox, QScrollArea)
+                             QHBoxLayout, QGroupBox, QScrollArea, QComboBox,
+                             QPushButton, QColorDialog)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QVector3D
 
@@ -37,6 +38,8 @@ class PropertiesWidget(QWidget):
         
         # Create property groups
         self._create_transform_group()
+        self._create_role_group()
+        self._create_material_group()
         
         # Initially show "No object selected"
         self.no_selection_label = QLabel("No object selected")
@@ -102,6 +105,37 @@ class PropertiesWidget(QWidget):
         
         self.transform_group.setLayout(transform_layout)
         self.transform_group.hide()  # Hidden until object selected
+
+    def _create_role_group(self):
+        """Create the Role property group"""
+        self.role_group = QGroupBox("Role")
+        role_layout = QVBoxLayout()
+
+        self.role_combo = QComboBox()
+        self.role_combo.currentIndexChanged.connect(self._on_role_changed)
+
+        role_layout.addWidget(self.role_combo)
+        self.role_group.setLayout(role_layout)
+        self.role_group.hide()
+
+    def _create_material_group(self):
+        """Create the Material/Color property group"""
+        self.material_group = QGroupBox("Material")
+        material_layout = QVBoxLayout()
+
+        # Color picker
+        color_layout = QHBoxLayout()
+        color_layout.addWidget(QLabel("Color:"))
+        
+        self.color_button = QPushButton()
+        self.color_button.setFixedWidth(60)
+        self.color_button.clicked.connect(self._on_color_clicked)
+        color_layout.addWidget(self.color_button)
+        color_layout.addStretch()
+        
+        material_layout.addLayout(color_layout)
+        self.material_group.setLayout(material_layout)
+        self.material_group.hide()
         
     def _create_spinbox(self, label, min_val=-1000, max_val=1000, default=0.0):
         """Helper to create a spinbox with common settings"""
@@ -153,16 +187,45 @@ class PropertiesWidget(QWidget):
         elif sender == self.scale_z:
             self.current_object.scale.setZ(value)
             self.property_changed.emit("scale", self.current_object.scale)
-    
+
+    def _on_role_changed(self, index: int):
+        """Handle role combo changes."""
+        if self._updating or not self.current_object:
+            return
+        role = self.role_combo.currentData()
+        self.current_object.role = role
+        self.property_changed.emit("role", role)
+
+    def _on_color_clicked(self):
+        """Open a color dialog to change the object color."""
+        if self._updating or not self.current_object:
+            return
+            
+        color = QColorDialog.getColor(self.current_object.color, self, "Select Object Color")
+        if color.isValid():
+            self.current_object.color = color
+            self._update_color_button_style(color)
+            self.property_changed.emit("color", color)
+
+    def _update_color_button_style(self, color):
+        """Update the color button's background to match the current color."""
+        self.color_button.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555;")
+
     def set_object(self, obj):
         """Set the current object to display properties for"""
         self.current_object = obj
         
         if obj is None:
             self.transform_group.hide()
+            self.role_group.hide()
             self.no_selection_label.show()
             if self.transform_group.parent() is None:
                 self.properties_layout.addWidget(self.transform_group)
+            if self.role_group.parent() is None:
+                self.properties_layout.addWidget(self.role_group)
+            if self.material_group.parent() is None:
+                self.properties_layout.addWidget(self.material_group)
+            self.material_group.hide()
             return
         
         # Show transform group and hide "no selection" label
@@ -170,6 +233,14 @@ class PropertiesWidget(QWidget):
         if self.transform_group.parent() is None:
             self.properties_layout.addWidget(self.transform_group)
         self.transform_group.show()
+
+        if self.role_group.parent() is None:
+            self.properties_layout.addWidget(self.role_group)
+        self.role_group.show()
+
+        if self.material_group.parent() is None:
+            self.properties_layout.addWidget(self.material_group)
+        self.material_group.show()
         
         # Update spinboxes with object values
         self._updating = True
@@ -188,5 +259,16 @@ class PropertiesWidget(QWidget):
         self.scale_x.setValue(obj.scale.x())
         self.scale_y.setValue(obj.scale.y())
         self.scale_z.setValue(obj.scale.z())
+
+        # Role - Re-populate based on supported roles
+        self.role_combo.clear()
+        for r in obj.SUPPORTED_ROLES:
+            self.role_combo.addItem("(none)" if r is None else r, userData=r)
+            
+        idx = self.role_combo.findData(obj.role)
+        self.role_combo.setCurrentIndex(max(idx, 0))
+        
+        # Color
+        self._update_color_button_style(obj.color)
         
         self._updating = False

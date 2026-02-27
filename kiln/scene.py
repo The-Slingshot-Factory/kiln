@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from kiln.objects import BaseObject, Plane, Cube
+from kiln.objects import BaseObject, Plane, Box
 
 if TYPE_CHECKING:
     from PyQt6.QtGui import QVector3D
@@ -140,15 +140,28 @@ class Scene(QObject):
     # Convenience factories
     # ------------------------------------------------------------------
 
+    def _generate_unique_name(self, prefix: str) -> str:
+        """Return a name starting with *prefix* that isn't used by any object."""
+        names = {obj.name for obj in self.objects}
+        if prefix not in names:
+            return prefix
+        
+        i = 1
+        while f"{prefix}_{i}" in names:
+            i += 1
+        return f"{prefix}_{i}"
+
     def add_plane(self, position: "QVector3D | None" = None) -> Plane:
-        plane = Plane("Plane")
+        name = self._generate_unique_name("Plane")
+        plane = Plane(name)
         self.add_object(plane, position)
         return plane
 
-    def add_cube(self, position: "QVector3D | None" = None) -> Cube:
-        cube = Cube("Cube")
-        self.add_object(cube, position)
-        return cube
+    def add_box(self, position: "QVector3D | None" = None) -> Box:
+        name = self._generate_unique_name("Box")
+        box = Box(name)
+        self.add_object(box, position)
+        return box
 
     # ------------------------------------------------------------------
     # USD sync helpers
@@ -180,11 +193,11 @@ class Scene(QObject):
             if type_attr and type_attr.IsValid():
                 obj_type = type_attr.Get()
 
-            if obj_type not in ("Plane", "Cube"):
+            if obj_type not in ("Plane", "Box"):
                 continue
 
             name = prim.GetName()
-            obj: BaseObject = Plane(name) if obj_type == "Plane" else Cube(name)
+            obj: BaseObject = Plane(name) if obj_type == "Plane" else Box(name)
 
             xform = UsdGeom.Xform(prim)
             if xform:
@@ -209,6 +222,18 @@ class Scene(QObject):
                 if scale_op:
                     v = scale_op.Get()
                     obj.scale = QVector3D(v[0], v[1], v[2])
+
+                # Load metadata
+                role_attr = prim.GetAttribute("kiln:role")
+                if role_attr and role_attr.IsValid():
+                    r = role_attr.Get()
+                    obj.role = r if r else None
+
+                color_attr = prim.GetAttribute("kiln:color")
+                if color_attr and color_attr.IsValid():
+                    from PyQt6.QtGui import QColor
+                    c = color_attr.Get()
+                    obj.color = QColor.fromRgbF(c[0], c[1], c[2])
 
                 obj.prim_path = str(prim.GetPath())
 

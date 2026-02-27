@@ -1,9 +1,12 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QLabel
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QLabel, QMenu
+from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint
 
 class SceneHierarchyWidget(QWidget):
     # Signal emitted when an object is selected in the hierarchy
     object_selected = pyqtSignal(object)
+    # Signal emitted when an object is requested to be deleted
+    object_deleted = pyqtSignal(object)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -24,6 +27,10 @@ class SceneHierarchyWidget(QWidget):
         
         # Connect selection
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
+        
+        # Context menu
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._show_context_menu)
         
         self.objects_map = {} # Map item to object
         self.current_objects = []
@@ -67,3 +74,28 @@ class SceneHierarchyWidget(QWidget):
             self.object_selected.emit(obj)
         else:
             self.object_selected.emit(None)
+
+    def _show_context_menu(self, pos: QPoint):
+        item = self.tree.itemAt(pos)
+        if not item:
+            return
+
+        obj = item.data(0, Qt.ItemDataRole.UserRole)
+        if not obj:
+            return
+
+        menu = QMenu(self)
+        delete_action = QAction(f"Delete '{obj.name}'", self)
+        
+        # We need a reference to the scene to delete, but HierarchyWidget 
+        # doesn't usually own it. However, in this app, we can either:
+        # 1. Emit a signal 'object_deleted' and let the parent handle it.
+        # 2. Give the hierarchy a reference to the scene.
+        #
+        # Looking at project_screen.py might help see how it's used.
+        # For now, let's look at the current signals. It only has object_selected.
+        # Let's add object_deleted.
+        
+        delete_action.triggered.connect(lambda: self.object_deleted.emit(obj))
+        menu.addAction(delete_action)
+        menu.exec(self.tree.mapToGlobal(pos))

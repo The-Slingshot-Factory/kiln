@@ -203,42 +203,44 @@ def _build_mjcf(scene: "Scene", scene_filename: str, model_name: str) -> Element
 
 
 def _add_object_body(worldbody: Element, obj: "BaseObject") -> None:
-    """Add a ``<body>`` element for a single scene object (Plane or Cube)."""
-    from kiln.objects import Plane, Cube
+    """Add a ``<body>`` element for a single scene object (Plane or Box)."""
+    from kiln.objects import Plane, Box
 
     safe_name = _safe_id(obj.name)
+    # If the object has a role (e.g. "ground"), use it as the XML id.
+    xml_id = obj.role if obj.role else safe_name
 
     pos = _vec3_str(obj.position.x(), obj.position.y(), obj.position.z())
     quat = _quat_from_euler_deg(obj.rotation.x(), obj.rotation.y(), obj.rotation.z())
     quat_s = _quat_str(*quat)
 
     body = SubElement(worldbody, "body")
-    body.set("name", safe_name)
+    body.set("name", xml_id)
     body.set("pos", pos)
     body.set("quat", quat_s)
 
     geom = SubElement(body, "geom")
-    geom.set("name", f"{safe_name}_geom")
+    geom.set("name", f"{xml_id}_geom")
 
     if isinstance(obj, Plane):
-        # Plane → box with very thin Y dimension
-        half_w = (obj.width * obj.scale.x()) / 2.0
-        half_d = (obj.depth * obj.scale.z()) / 2.0
-        half_h = 0.01  # thin slab
-        geom.set("type", "box")
-        geom.set("size", _vec3_str(half_w, half_h, half_d))
+        # Plane — spec says geom type="plane", size="x y z" (not used for dims)
+        plane_w = obj.width * obj.scale.x()
+        plane_d = obj.depth * obj.scale.z()
+        geom.set("type", "plane")
+        geom.set("size", _vec3_str(plane_w, plane_d, 1))
         geom.set("mass", "0")
         r, g, b = obj.color.redF(), obj.color.greenF(), obj.color.blueF()
         geom.set("rgba", f"{_fmt(r)} {_fmt(g)} {_fmt(b)} 1")
 
         kiln_prim = SubElement(body, f"{{{KILN_NS}}}primitive")
-        kiln_prim.set("id", safe_name)
+        kiln_prim.set("id", xml_id)
         kiln_prim.set("shape", "plane")
         kiln_prim.set("fixed", "true")
         kiln_prim.set("collision", "true")
         kiln_prim.set("visualization", "true")
+        kiln_prim.set("normal", "0 1 0")
 
-    elif isinstance(obj, Cube):
+    elif isinstance(obj, Box):
         half_s = (obj.size * obj.scale.x()) / 2.0
         geom.set("type", "box")
         geom.set("size", _vec3_str(half_s, half_s, half_s))
@@ -247,7 +249,7 @@ def _add_object_body(worldbody: Element, obj: "BaseObject") -> None:
         geom.set("rgba", f"{_fmt(r)} {_fmt(g)} {_fmt(b)} 1")
 
         kiln_prim = SubElement(body, f"{{{KILN_NS}}}primitive")
-        kiln_prim.set("id", safe_name)
+        kiln_prim.set("id", xml_id)
         kiln_prim.set("shape", "box")
         kiln_prim.set("fixed", "true")
         kiln_prim.set("collision", "true")
@@ -267,7 +269,7 @@ def _add_ui_objects(root: Element, scene: "Scene") -> None:
     This allows round-tripping: opening an exported XML in Kiln can
     reconstruct all objects with their original transforms.
     """
-    from kiln.objects import Plane, Cube
+    from kiln.objects import Plane, Box
 
     ui_el = SubElement(root, f"{{{KILN_NS}}}ui_objects")
     ui_el.set(f"{{{KILN_NS}}}up_axis", "y")
@@ -280,8 +282,8 @@ def _add_ui_objects(root: Element, scene: "Scene") -> None:
             o.set("type", "Plane")
             o.set("width", _fmt(obj.width))
             o.set("depth", _fmt(obj.depth))
-        elif isinstance(obj, Cube):
-            o.set("type", "Cube")
+        elif isinstance(obj, Box):
+            o.set("type", "Box")
             o.set("size", _fmt(obj.size))
         else:
             o.set("type", "Unknown")
@@ -289,3 +291,4 @@ def _add_ui_objects(root: Element, scene: "Scene") -> None:
         o.set("pos_ui", _vec3_str(obj.position.x(), obj.position.y(), obj.position.z()))
         o.set("rot_xyz_deg", _vec3_str(obj.rotation.x(), obj.rotation.y(), obj.rotation.z()))
         o.set("scale", _vec3_str(obj.scale.x(), obj.scale.y(), obj.scale.z()))
+        o.set("color", f"{obj.color.redF():.3f} {obj.color.greenF():.3f} {obj.color.blueF():.3f}")

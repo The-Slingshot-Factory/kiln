@@ -89,9 +89,10 @@ class ProjectScreen(QWidget):
         self.scene.selection_changed.connect(self.hierarchy.select_object)
         self.scene.selection_changed.connect(self.properties.set_object)
         
-        # 3. Hierarchy -> Scene (Input selection)
+        # 3. Hierarchy -> Scene (Input selection + deletion)
         self.hierarchy.object_selected.connect(self.scene.select)
-        
+        self.hierarchy.object_deleted.connect(self.scene.remove_object)
+
         # 4. Properties -> Scene (Input changes)
         self.properties.property_changed.connect(self._on_property_changed)
         

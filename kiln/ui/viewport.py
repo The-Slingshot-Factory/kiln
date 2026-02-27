@@ -52,9 +52,10 @@ class ViewportWidget(QOpenGLWidget):
         # Drag and Drop
         self.setAcceptDrops(True)
 
-        # Listen to scene changes
         self.scene.objects_changed.connect(self.update)
         self.scene.selection_changed.connect(self._on_scene_selection_changed)
+
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     # ------------------------------------------------------------------
     # Convenience properties that delegate to the scene
@@ -106,8 +107,8 @@ class ViewportWidget(QOpenGLWidget):
 
             if obj_type == "Plane":
                 self.scene.add_plane(position=position)
-            elif obj_type == "Cube":
-                self.scene.add_cube(position=position)
+            elif obj_type == "Box":
+                self.scene.add_box(position=position)
 
             event.acceptProposedAction()
 
@@ -145,6 +146,92 @@ class ViewportWidget(QOpenGLWidget):
 
         hit_point = near_point + t * ray_dir
         return hit_point
+
+    def get_ray_from_mouse(self, screen_x, screen_y):
+        """Returns (origin, direction) of a ray starting at the camera."""
+        w = self.width()
+        h = self.height()
+        ndc_x = (screen_x / w) * 2.0 - 1.0
+        ndc_y = 1.0 - (screen_y / h) * 2.0
+
+        vp = self.get_view_projection_matrix()
+        try:
+            inv_vp = np.linalg.inv(vp)
+        except np.linalg.LinAlgError:
+            return np.array([0.0, 0.0, 0.0]), np.array([0.0, 0.0, 1.0])
+
+        def unproject(ndc_z):
+            vec = np.array([ndc_x, ndc_y, ndc_z, 1.0])
+            world = inv_vp @ vec
+            if world[3] != 0:
+                world /= world[3]
+            return world[:3]
+
+        near_point = unproject(-1.0)
+        far_point = unproject(1.0)
+        
+        ray_dir = far_point - near_point
+        ray_dir /= np.linalg.norm(ray_dir)
+        
+        return near_point, ray_dir
+
+    def intersect_ray_aabb(self, ray_o, ray_d, box_min, box_max):
+        """Standard slab-test for Ray-AABB intersection."""
+        t1 = (box_min - ray_o) / (ray_d + 1e-10)
+        t2 = (box_max - ray_o) / (ray_d + 1e-10)
+        
+        tmin = np.maximum(np.minimum(t1, t2), -np.inf)
+        tmax = np.minimum(np.maximum(t1, t2), np.inf)
+        
+        real_tmin = np.max(tmin)
+        real_tmax = np.min(tmax)
+        
+        if real_tmax >= real_tmin and real_tmax >= 0:
+            return real_tmin if real_tmin > 0 else 0
+        return None
+
+    def pick_object(self, screen_x, screen_y):
+        """Returns the frontmost object at the given screen coordinates."""
+        ray_o, ray_d = self.get_ray_from_mouse(screen_x, screen_y)
+        
+        closest_obj = None
+        min_t = float('inf')
+        
+        from kiln.objects import Box, Plane
+        
+        for obj in self.scene.objects:
+            # Transform ray to local space
+            model_q = obj.get_transform_matrix()
+            model = np.array(model_q.copyDataTo(), dtype=np.float32).reshape(4, 4).T
+            try:
+                inv_model = np.linalg.inv(model)
+            except np.linalg.LinAlgError:
+                continue
+                
+            local_o = (inv_model @ np.append(ray_o, 1.0))[:3]
+            local_d = (inv_model @ np.append(ray_d, 0.0))[:3]
+            
+            t = None
+            if isinstance(obj, Box):
+                hs = obj.size / 2.0
+                b_min = np.array([-hs, 0, -hs])
+                b_max = np.array([hs, obj.size, hs])
+                t = self.intersect_ray_aabb(local_o, local_d, b_min, b_max)
+            elif isinstance(obj, Plane):
+                # Simple infinite plane intersection in local space (y=0)
+                if abs(local_d[1]) > 1e-6:
+                    t_val = -local_o[1] / local_d[1]
+                    if t_val >= 0:
+                        # Check bounds if it's a finite plane (optional, but keep it simple)
+                        hit_local = local_o + t_val * local_d
+                        if abs(hit_local[0]) <= obj.width/2.0 and abs(hit_local[2]) <= obj.depth/2.0:
+                            t = t_val
+                            
+            if t is not None and t < min_t:
+                min_t = t
+                closest_obj = obj
+                
+        return closest_obj
 
     # ------------------------------------------------------------------
     # Selection (delegates to scene)
@@ -370,7 +457,9 @@ class ViewportWidget(QOpenGLWidget):
 
                 # Draw Solid
                 glUniformMatrix4fv(mvp_loc, 1, GL_FALSE, mvp.T)
-                glUniform1i(use_color_loc, 0)
+                glUniform1i(use_color_loc, 1) # Use uniform color
+                r, g, b = obj.color.redF(), obj.color.greenF(), obj.color.blueF()
+                glUniform4f(override_color_loc, r, g, b, 1.0)
                 glUniform1f(z_offset_loc, 0.0)
                 obj.render(self.program)
 
@@ -406,10 +495,11 @@ class ViewportWidget(QOpenGLWidget):
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event):
+        self.setFocus()
         if not self.scene.is_loaded:
             return
 
-        self.last_mouse_pos = event.pos()
+        self.last_mouse_pos = event.position().toPoint()
         self.mouse_button = event.button()
         self.mouse_press_pos = event.pos()
 
@@ -444,22 +534,27 @@ class ViewportWidget(QOpenGLWidget):
         if hasattr(self, 'mouse_press_pos'):
             delta = (event.pos() - self.mouse_press_pos).manhattanLength()
             if delta < 5 and event.button() == Qt.MouseButton.LeftButton:
-                if self.scene.objects:
-                    # TODO: Implement proper ray-object intersection
-                    self.scene.select(self.scene.objects[-1])
-                else:
-                    self.scene.select(None)
+                picked = self.pick_object(event.pos().x(), event.pos().y())
+                self.scene.select(picked)
 
         self.mouse_button = None
 
     def wheelEvent(self, event):
         if not self.scene.is_loaded:
             return
-
         delta = event.angleDelta().y()
-        self.camera_distance *= 0.9 if delta > 0 else 1.1
-        self.camera_distance = max(1.0, min(100.0, self.camera_distance))
+        self.camera_distance -= delta * 0.005 * (self.camera_distance * 0.1)
+        self.camera_distance = max(0.1, min(self.camera_distance, 1000.0))
         self.update()
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts."""
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            if self.scene.selected_object:
+                self.scene.remove_object(self.scene.selected_object)
+                self.update()
+        else:
+            super().keyPressEvent(event)
 
     # ------------------------------------------------------------------
     # Context menu
@@ -468,14 +563,20 @@ class ViewportWidget(QOpenGLWidget):
     def show_context_menu(self, pos):
         menu = QMenu(self)
 
+        if self.scene.selected_object:
+            delete_action = QAction(f"Delete '{self.scene.selected_object.name}'", self)
+            delete_action.triggered.connect(lambda: self.scene.remove_object(self.scene.selected_object))
+            menu.addAction(delete_action)
+            menu.addSeparator()
+
         add_object_menu = menu.addMenu("Add object")
 
         add_plane_action = QAction("Plane", self)
         add_plane_action.triggered.connect(lambda: self.scene.add_plane())
         add_object_menu.addAction(add_plane_action)
 
-        add_cube_action = QAction("Cube", self)
-        add_cube_action.triggered.connect(lambda: self.scene.add_cube())
-        add_object_menu.addAction(add_cube_action)
+        add_box_action = QAction("Box", self)
+        add_box_action.triggered.connect(lambda: self.scene.add_box())
+        add_object_menu.addAction(add_box_action)
 
         menu.exec(self.mapToGlobal(pos))
