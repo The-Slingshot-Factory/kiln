@@ -21,7 +21,7 @@ class LibraryWidget(QWidget):
         
         # Add basic items
         self.add_item("Plane", "application/x-kiln-object:Plane")
-        self.add_item("Cube", "application/x-kiln-object:Cube")
+        self.add_item("Box", "application/x-kiln-object:Box")
         
         layout.addWidget(self.list_widget)
 
@@ -47,7 +47,7 @@ class DraggableListWidget(QListWidget):
             return
             
         mime_data = QMimeData()
-        obj_type = item.text() # "Plane" or "Cube"
+        obj_type = item.text() # "Plane" or "Box"
         mime_data.setText(obj_type)
         mime_data.setData("application/x-kiln-object", obj_type.encode('utf-8'))
         
@@ -99,7 +99,7 @@ class LibraryWidget(QWidget):
         layout.addWidget(self.list_widget)
         
         self.add_item("Plane", "Plane")
-        self.add_item("Cube", "Cube")
+        self.add_item("Box", "Box")
 
     def add_item(self, name, type_id):
         item = QListWidgetItem(name)

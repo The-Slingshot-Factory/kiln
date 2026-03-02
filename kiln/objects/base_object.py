@@ -13,14 +13,24 @@ except ImportError:
 print("DEBUG: BaseObject module loaded - VERSION 2 (TRS Fix)")
 
 class BaseObject:
-    def __init__(self, name: str, position=QVector3D(0, 0, 0), rotation=QVector3D(0, 0, 0), scale=QVector3D(1, 1, 1)):
+    # Allowed roles. None = no special role.  Extend this list as needed.
+    ROLES: list[str | None] = [None, "ground", "building"]
+    
+    # Subclasses should override this to restrict which roles they support.
+    # By default, objects support no special roles.
+    SUPPORTED_ROLES: list[str | None] = [None]
+
+    def __init__(self, name: str, position: QVector3D | None = None, 
+                 rotation: QVector3D | None = None, 
+                 scale: QVector3D | None = None):
         self.name = name
-        self.position = position
-        self.rotation = rotation # Euler angles in degrees (X, Y, Z)
-        self.scale = scale
+        self.position = position if position is not None else QVector3D(0, 0, 0)
+        self.rotation = rotation if rotation is not None else QVector3D(0, 0, 0) # Euler angles in degrees
+        self.scale = scale if scale is not None else QVector3D(1, 1, 1)
         self.visible = True
         self.color = QColor(255, 255, 255) # Default white color
         self.prim_path = None
+        self.role: str | None = None
 
     def get_transform_matrix(self) -> QMatrix4x4:
         """
@@ -99,5 +109,17 @@ class BaseObject:
 
         scale_op = xform.GetScaleOp() or xform.AddScaleOp()
         scale_op.Set(Gf.Vec3d(self.scale.x(), self.scale.y(), self.scale.z()))
+
+        # Sync Metadata
+        from pxr import Sdf
+        prim = xform.GetPrim()
+        
+        # Role
+        role_attr = prim.CreateAttribute("kiln:role", Sdf.ValueTypeNames.String)
+        role_attr.Set(self.role if self.role else "")
+        
+        # Color
+        color_attr = prim.CreateAttribute("kiln:color", Sdf.ValueTypeNames.Float3)
+        color_attr.Set(Gf.Vec3f(self.color.redF(), self.color.greenF(), self.color.blueF()))
         
         return True

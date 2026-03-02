@@ -19,8 +19,12 @@ except ImportError:
     Vt = None
 
 class Plane(BaseObject):
+    SUPPORTED_ROLES = [None, "ground"]
+    
     def __init__(self, name: str, width: float = 10.0, depth: float = 10.0, 
-                 position=QVector3D(0, 0, 0), rotation=QVector3D(0, 0, 0), scale=QVector3D(1, 1, 1)):
+                 position: QVector3D | None = None, 
+                 rotation: QVector3D | None = None, 
+                 scale: QVector3D | None = None):
         super().__init__(name, position, rotation, scale)
         self.width = width
         self.depth = depth

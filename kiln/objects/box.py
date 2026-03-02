@@ -13,9 +13,13 @@ except ImportError:
     Vt = None
     Sdf = None
 
-class Cube(BaseObject):
+class Box(BaseObject):
+    SUPPORTED_ROLES = [None, "building"]
+
     def __init__(self, name: str, size: float = 1.0, 
-                 position=QVector3D(0, 0, 0), rotation=QVector3D(0, 0, 0), scale=QVector3D(1, 1, 1)):
+                 position: QVector3D | None = None, 
+                 rotation: QVector3D | None = None, 
+                 scale: QVector3D | None = None):
         super().__init__(name, position, rotation, scale)
         self.size = size
         self.color = QColor(52, 152, 219) # Premium Blue (#3498db)
@@ -27,7 +31,7 @@ class Cube(BaseObject):
     def get_asset_path(self):
         import os
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        asset_path = os.path.join(os.path.dirname(current_dir), "assets", "cube.usda")
+        asset_path = os.path.join(os.path.dirname(current_dir), "assets", "box.usda")
         return asset_path
 
     def _setup_gl_resources(self):
@@ -35,15 +39,6 @@ class Cube(BaseObject):
         r, g, b, a = self.color.redF(), self.color.greenF(), self.color.blueF(), 1.0
 
         # 8 corners
-        # 0: -x, -y, +z (BLF)
-        # 1: +x, -y, +z (BRF)
-        # 2: +x, +y, +z (TRF)
-        # 3: -x, +y, +z (TLF)
-        # 4: -x, -y, -z (BLB)
-        # 5: +x, -y, -z (BRB)
-        # 6: +x, +y, -z (TRB)
-        # 7: -x, +y, -z (TLB)
-        
         p = [
             [-hs, 0,        hs], [ hs, 0,        hs], [ hs, self.size,  hs], [-hs, self.size,  hs],
             [-hs, 0,       -hs], [ hs, 0,       -hs], [ hs, self.size, -hs], [-hs, self.size, -hs]
@@ -83,39 +78,6 @@ class Cube(BaseObject):
         glBindVertexArray(0)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         
-        # Outline (12 edges)
-        # 0: BLF, 1: BRF, 2: TRF, 3: TLF (Front face? No see p definition)
-        # p from previous setup:
-        # 0:BLF, 1:BRF, 2:TRF, 3:TLF? No wait.
-        # p has 8 points.
-        # [0,1,2,3] are Base (Y=0). [4,5,6,7] are Top (Y=size).
-        
-        # Edges:
-        # Base Loop: 0-1, 1-2, 3-2, 0-3 ?
-        # Top Loop: 4-5, 5-6, 7-6, 4-7 ?
-        # Verticals: 0-4, 1-5, 2-6, 3-7 ?
-        
-        # Let's verify p indices again.
-        # p[0](-,-,+), p[1](+,-,+), p[2](+,+,+), p[3](-,+,+) ??
-        # In current code:
-        # p = [ [-hs, 0, hs], [hs, 0, hs], [hs, size, hs], [-hs, size, hs], ... ]
-        # 0: (-hs, 0, hs) BLF
-        # 1: (hs, 0, hs) BRF
-        # 2: (hs, size, hs) TRF
-        # 3: (-hs, size, hs) TLF
-        # So 0,1,2,3 is the FRONT FACE.
-        # 4,5,6,7 is the BACK FACE.
-        
-        # Edges layout:
-        # Front Loop: 0-1, 1-2, 2-3, 3-0
-        # Back Loop: 4-5, 5-6, 6-7, 7-4
-        # Connecting: 0-4 (BLF-BLB), 1-5 (BRF-BRB), 2-6 (TRF-TRB), 3-7 (TLF-TLB).
-        
-        # Wait, indices check:
-        # 0: (-hs, 0, hs) BLF
-        # 4: (-hs, 0, -hs) BLB
-        # So 0-4 is valid edge.
-        
         outline_indices = [
             0,1, 1,2, 2,3, 3,0, # Front Face
             4,5, 5,6, 6,7, 7,4, # Back Face
@@ -125,7 +87,7 @@ class Cube(BaseObject):
         outline_data = []
         for i in outline_indices:
             outline_data.extend(p[i])
-            outline_data.extend([0,0,0,1]) # Black color (placeholder)
+            outline_data.extend([0,0,0,1]) # Black color
             
         outline_verts = np.array(outline_data, dtype=np.float32)
         
@@ -178,6 +140,6 @@ class Cube(BaseObject):
         prim.GetReferences().AddReference(asset_path)
         
         attr = prim.CreateAttribute("kiln:object_type", Sdf.ValueTypeNames.String)
-        attr.Set("Cube")
+        attr.Set("Box")
         
         return True
