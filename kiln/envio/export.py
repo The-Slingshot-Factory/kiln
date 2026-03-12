@@ -143,7 +143,6 @@ def _build_mjcf(scene: "Scene", scene_filename: str, model_name: str) -> Element
 
     root = Element("mujoco")
     root.set("model", model_name)
-    root.set(f"xmlns:kiln", KILN_NS)
     root.set(f"{{{KILN_NS}}}schema_version", "1")
     root.set(f"{{{KILN_NS}}}up_axis", "y")
     root.set(f"{{{KILN_NS}}}units", "meter")
