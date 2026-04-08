@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Runtime types for loaded env bundles."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeAlias
 
@@ -20,3 +20,4 @@ class LoadedEnvBundle:
     entities_by_id: dict[str, Entity]
     world_entity: Entity | None
     spawn_points: dict[str, Pose]
+    actors_by_id: dict[str, Any] = field(default_factory=dict)

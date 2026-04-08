@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import platform
+import random
 import sys
 import warnings
 from dataclasses import dataclass
@@ -515,6 +516,129 @@ class GenesisSim:
             case _:
                 raise EnvBundleError(f"Unsupported primitive shape: {prim.shape!r}")
 
+    def _bundle_static_obstacle_aabbs(self, bundle: Any) -> list[Any]:
+        """Collect static box obstacles as XY AABBs (for NPC NavGrid routing)."""
+        from kiln.actors.pathfinding import AABB
+
+        obstacles: list[AABB] = []
+        for prim in getattr(bundle, "primitives", ()):
+            if getattr(prim, "shape", None) != "box":
+                continue
+            if getattr(prim, "size", None) is None:
+                continue
+            fixed = bool(prim.fixed) if getattr(prim, "fixed", None) is not None else True
+            if (not fixed) or (not bool(getattr(prim, "collision", True))):
+                continue
+
+            cx, cy, _ = prim.pose.pos
+            sx, sy, _ = prim.size
+            hx = 0.5 * float(sx)
+            hy = 0.5 * float(sy)
+            obstacles.append(
+                AABB(
+                    float(cx) - hx,
+                    float(cy) - hy,
+                    float(cx) + hx,
+                    float(cy) + hy,
+                )
+            )
+        return obstacles
+
+    def _add_bundle_actor(self, actor_spec: Any, *, obstacles: list[Any]) -> Any:
+        """Instantiate a CarBlock/NPCBlock from a parsed XML actor spec."""
+        from kiln.actors import CarBlock, CarBlockConfig, ControlMode, NPCBlock, NPCBlockConfig
+        from kiln.actors.pathfinding import NavGrid
+        from kiln.envio.bundle import EnvBundleError
+
+        actor_type = str(getattr(actor_spec, "actor_type", "")).strip().lower()
+        actor_id = str(getattr(actor_spec, "id", "")).strip()
+        if not actor_id:
+            raise EnvBundleError("Actor spec is missing id")
+
+        mode_raw = str(getattr(actor_spec, "control_mode", "kinematic")).strip().lower()
+        if mode_raw == "kinematic":
+            control_mode = ControlMode.KINEMATIC
+        elif mode_raw == "force_torque":
+            control_mode = ControlMode.FORCE_TORQUE
+        else:
+            raise EnvBundleError(
+                f"Unsupported control_mode={mode_raw!r} for actor {actor_id!r}. "
+                "Expected kinematic or force_torque."
+            )
+
+        if actor_type == "car_block":
+            cfg = CarBlockConfig(
+                size=tuple(float(v) for v in actor_spec.size),
+                mass=float(actor_spec.mass),
+                color=actor_spec.color,
+                control_mode=control_mode,
+                max_speed=float(actor_spec.max_speed),
+                speed_delta=float(actor_spec.speed_delta),
+                turn_rate=float(actor_spec.turn_rate),
+                force=float(actor_spec.force),
+                torque=float(actor_spec.torque),
+                initial_yaw=float(actor_spec.initial_yaw),
+            )
+            return CarBlock(
+                self,
+                name=actor_id,
+                position=tuple(float(v) for v in actor_spec.pose.pos),
+                config=cfg,
+            )
+
+        if actor_type == "npc_block":
+            cfg = NPCBlockConfig(
+                size=tuple(float(v) for v in actor_spec.size),
+                mass=float(actor_spec.mass),
+                color=actor_spec.color,
+                control_mode=control_mode,
+                max_speed=float(actor_spec.max_speed),
+                speed_delta=float(actor_spec.speed_delta),
+                turn_rate=float(actor_spec.turn_rate),
+                force=float(actor_spec.force),
+                torque=float(actor_spec.torque),
+                initial_yaw=float(actor_spec.initial_yaw),
+                roam_xy_min=tuple(float(v) for v in actor_spec.roam_xy_min),
+                roam_xy_max=tuple(float(v) for v in actor_spec.roam_xy_max),
+                goal_tolerance=float(actor_spec.goal_tolerance),
+                cruise_speed=float(actor_spec.cruise_speed),
+                heading_threshold=float(actor_spec.heading_threshold),
+                raycast_length=float(actor_spec.raycast_length),
+                raycast_angle=float(actor_spec.raycast_angle),
+                avoid_distance=float(actor_spec.avoid_distance),
+                brake_distance=float(actor_spec.brake_distance),
+                avoid_radius=float(actor_spec.avoid_radius),
+                emergency_brake_radius=float(actor_spec.emergency_brake_radius),
+                stuck_steps=int(actor_spec.stuck_steps),
+                progress_eps=float(actor_spec.progress_eps),
+                nav_cell_size=float(actor_spec.nav_cell_size),
+                nav_inflate=float(actor_spec.nav_inflate),
+                waypoint_tolerance=float(actor_spec.waypoint_tolerance),
+                max_goal_samples=int(actor_spec.max_goal_samples),
+            )
+            nav_grid = NavGrid.build(
+                xy_min=cfg.roam_xy_min,
+                xy_max=cfg.roam_xy_max,
+                cell_size=cfg.nav_cell_size,
+                obstacles=obstacles,
+                inflate=cfg.nav_inflate,
+            )
+            rng_seed = int(self.config.seed) if self.config.seed is not None else 0
+            actor_seed = sum(ord(ch) for ch in actor_id)
+            return NPCBlock(
+                self,
+                name=actor_id,
+                position=tuple(float(v) for v in actor_spec.pose.pos),
+                config=cfg,
+                rng=random.Random(rng_seed ^ actor_seed),
+                nav_grid=nav_grid,
+            )
+
+        raise EnvBundleError(
+            f"Unsupported actor_type={actor_type!r} for actor {actor_id!r}. "
+            "Only car_block/npc_block are supported."
+        )
+
     def _instantiate_loaded_bundle(self, *, bundle_root: Path, bundle: Any) -> LoadedEnvBundle:
         """Instantiate scene entities from a parsed env-bundle object."""
         from kiln.envio.bundle import EnvBundleError
@@ -528,6 +652,7 @@ class GenesisSim:
             self.init()
 
         entities: dict[str, Any] = {}
+        actors_by_id: dict[str, Any] = {}
 
         # 1) Static world (USD as one fixed entity)
         world_entity = self._add_bundle_world(bundle=bundle, bundle_root=bundle_root)
@@ -539,6 +664,18 @@ class GenesisSim:
                 raise EnvBundleError(f"Duplicate entity id in bundle: {prim.id!r}")
             entities[prim.id] = self._add_bundle_primitive(prim)
 
+        # 3) Dynamic actors (car/npc) from XML actor metadata.
+        obstacles = self._bundle_static_obstacle_aabbs(bundle)
+        for actor_spec in getattr(bundle, "actors", ()):
+            actor_id = str(getattr(actor_spec, "id", "")).strip()
+            if not actor_id:
+                raise EnvBundleError("Actor spec is missing id")
+            if actor_id in entities:
+                raise EnvBundleError(f"Duplicate entity id in bundle: {actor_id!r}")
+            actor = self._add_bundle_actor(actor_spec, obstacles=obstacles)
+            actors_by_id[actor_id] = actor
+            entities[actor_id] = getattr(actor, "entity", actor)
+
         # Build once after adding all entities.
         self.build()
 
@@ -549,6 +686,7 @@ class GenesisSim:
             entities_by_id=entities,
             world_entity=world_entity,
             spawn_points=spawn_points,
+            actors_by_id=actors_by_id,
         )
 
     def load_env_bundle(self, bundle_dir: str | Path, *, env_filename: str = "env.json") -> LoadedEnvBundle:
