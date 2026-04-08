@@ -206,8 +206,11 @@ def _add_object_body(worldbody: Element, obj: "BaseObject") -> None:
     from kiln.objects import Plane, Box
 
     safe_name = _safe_id(obj.name)
-    # If the object has a role (e.g. "ground"), use it as the XML id.
-    xml_id = obj.role if obj.role else safe_name
+    # Use role-derived IDs only for singleton semantic roles.
+    if obj.role in ("ground", "building"):
+        xml_id = obj.role
+    else:
+        xml_id = safe_name
 
     pos = _vec3_str(obj.position.x(), obj.position.y(), obj.position.z())
     quat = _quat_from_euler_deg(obj.rotation.x(), obj.rotation.y(), obj.rotation.z())
@@ -243,16 +246,59 @@ def _add_object_body(worldbody: Element, obj: "BaseObject") -> None:
         half_s = (obj.size * obj.scale.x()) / 2.0
         geom.set("type", "box")
         geom.set("size", _vec3_str(half_s, half_s, half_s))
-        geom.set("mass", "0")
+        is_actor = obj.role in ("car", "npc")
+        geom.set("mass", "1.0" if is_actor else "0")
         r, g, b = obj.color.redF(), obj.color.greenF(), obj.color.blueF()
         geom.set("rgba", f"{_fmt(r)} {_fmt(g)} {_fmt(b)} 1")
 
-        kiln_prim = SubElement(body, f"{{{KILN_NS}}}primitive")
-        kiln_prim.set("id", xml_id)
-        kiln_prim.set("shape", "box")
-        kiln_prim.set("fixed", "true")
-        kiln_prim.set("collision", "true")
-        kiln_prim.set("visualization", "true")
+        if is_actor:
+            SubElement(body, "freejoint")
+            kiln_actor = SubElement(body, f"{{{KILN_NS}}}actor")
+            kiln_actor.set("type", f"{obj.role}_block")
+            kiln_actor.set("control_mode", getattr(obj, "control_mode", "kinematic"))
+
+            kiln_control = SubElement(kiln_actor, f"{{{KILN_NS}}}control")
+            kiln_control.set("max_speed", _fmt(getattr(obj, "max_speed", 5.0)))
+            kiln_control.set("speed_delta", _fmt(getattr(obj, "speed_delta", 0.5)))
+            kiln_control.set("turn_rate", _fmt(getattr(obj, "turn_rate", 1.5)))
+            kiln_control.set("force", _fmt(getattr(obj, "force", 30.0)))
+            kiln_control.set("torque", _fmt(getattr(obj, "torque", 10.0)))
+            kiln_control.set("initial_yaw", _fmt(getattr(obj, "initial_yaw", 0.0)))
+
+            if obj.role == "npc":
+                kiln_policy = SubElement(kiln_actor, f"{{{KILN_NS}}}npc_policy")
+                roam_min = getattr(obj, "roam_xy_min", (-12.0, -12.0))
+                roam_max = getattr(obj, "roam_xy_max", (12.0, 12.0))
+                kiln_policy.set("roam_xy_min", f"{_fmt(roam_min[0])} {_fmt(roam_min[1])}")
+                kiln_policy.set("roam_xy_max", f"{_fmt(roam_max[0])} {_fmt(roam_max[1])}")
+                kiln_policy.set("goal_tolerance", _fmt(getattr(obj, "goal_tolerance", 0.5)))
+                kiln_policy.set("cruise_speed", _fmt(getattr(obj, "cruise_speed", 4.0)))
+                kiln_policy.set("heading_threshold", _fmt(getattr(obj, "heading_threshold", 0.25)))
+                kiln_policy.set("raycast_length", _fmt(getattr(obj, "raycast_length", 2.0)))
+                kiln_policy.set("raycast_angle", _fmt(getattr(obj, "raycast_angle", 0.45)))
+                kiln_policy.set("avoid_distance", _fmt(getattr(obj, "avoid_distance", 1.25)))
+                kiln_policy.set("brake_distance", _fmt(getattr(obj, "brake_distance", 0.5)))
+                kiln_policy.set("avoid_radius", _fmt(getattr(obj, "avoid_radius", 1.0)))
+                kiln_policy.set("emergency_brake_radius", _fmt(getattr(obj, "emergency_brake_radius", 0.6)))
+                kiln_policy.set("stuck_steps", str(int(getattr(obj, "stuck_steps", 30))))
+                kiln_policy.set("progress_eps", _fmt(getattr(obj, "progress_eps", 0.001)))
+                kiln_policy.set("nav_cell_size", _fmt(getattr(obj, "nav_cell_size", 0.5)))
+                kiln_policy.set("nav_inflate", _fmt(getattr(obj, "nav_inflate", 0.55)))
+                kiln_policy.set("waypoint_tolerance", _fmt(getattr(obj, "waypoint_tolerance", 0.6)))
+                kiln_policy.set("max_goal_samples", str(int(getattr(obj, "max_goal_samples", 50))))
+
+            kiln_action_map = SubElement(kiln_actor, f"{{{KILN_NS}}}action_map")
+            kiln_action_map.set("accelerate", "0")
+            kiln_action_map.set("decelerate", "1")
+            kiln_action_map.set("turn_left", "2")
+            kiln_action_map.set("turn_right", "3")
+        else:
+            kiln_prim = SubElement(body, f"{{{KILN_NS}}}primitive")
+            kiln_prim.set("id", xml_id)
+            kiln_prim.set("shape", "box")
+            kiln_prim.set("fixed", "true")
+            kiln_prim.set("collision", "true")
+            kiln_prim.set("visualization", "true")
 
     else:
         # Generic fallback

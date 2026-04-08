@@ -14,7 +14,7 @@ except ImportError:
     Sdf = None
 
 class Box(BaseObject):
-    SUPPORTED_ROLES = [None, "building"]
+    SUPPORTED_ROLES = [None, "building", "car", "npc"]
 
     def __init__(self, name: str, size: float = 1.0, 
                  position: QVector3D | None = None, 

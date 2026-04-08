@@ -235,6 +235,54 @@ class Scene(QObject):
                     c = color_attr.Get()
                     obj.color = QColor.fromRgbF(c[0], c[1], c[2])
 
+                def _get_attr(name: str):
+                    a = prim.GetAttribute(name)
+                    if not a or (not a.IsValid()):
+                        return None
+                    return a.Get()
+
+                def _set_float_if_present(attr_name: str, obj_attr: str) -> None:
+                    v = _get_attr(attr_name)
+                    if v is not None:
+                        setattr(obj, obj_attr, float(v))
+
+                def _set_int_if_present(attr_name: str, obj_attr: str) -> None:
+                    v = _get_attr(attr_name)
+                    if v is not None:
+                        setattr(obj, obj_attr, int(v))
+
+                control_mode = _get_attr("kiln:control_mode")
+                if control_mode:
+                    obj.control_mode = str(control_mode)
+                _set_float_if_present("kiln:max_speed", "max_speed")
+                _set_float_if_present("kiln:speed_delta", "speed_delta")
+                _set_float_if_present("kiln:turn_rate", "turn_rate")
+                _set_float_if_present("kiln:force", "force")
+                _set_float_if_present("kiln:torque", "torque")
+                _set_float_if_present("kiln:initial_yaw", "initial_yaw")
+
+                roam_xy_min = _get_attr("kiln:roam_xy_min")
+                if roam_xy_min is not None:
+                    obj.roam_xy_min = (float(roam_xy_min[0]), float(roam_xy_min[1]))
+                roam_xy_max = _get_attr("kiln:roam_xy_max")
+                if roam_xy_max is not None:
+                    obj.roam_xy_max = (float(roam_xy_max[0]), float(roam_xy_max[1]))
+                _set_float_if_present("kiln:goal_tolerance", "goal_tolerance")
+                _set_float_if_present("kiln:cruise_speed", "cruise_speed")
+                _set_float_if_present("kiln:heading_threshold", "heading_threshold")
+                _set_float_if_present("kiln:raycast_length", "raycast_length")
+                _set_float_if_present("kiln:raycast_angle", "raycast_angle")
+                _set_float_if_present("kiln:avoid_distance", "avoid_distance")
+                _set_float_if_present("kiln:brake_distance", "brake_distance")
+                _set_float_if_present("kiln:avoid_radius", "avoid_radius")
+                _set_float_if_present("kiln:emergency_brake_radius", "emergency_brake_radius")
+                _set_int_if_present("kiln:stuck_steps", "stuck_steps")
+                _set_float_if_present("kiln:progress_eps", "progress_eps")
+                _set_float_if_present("kiln:nav_cell_size", "nav_cell_size")
+                _set_float_if_present("kiln:nav_inflate", "nav_inflate")
+                _set_float_if_present("kiln:waypoint_tolerance", "waypoint_tolerance")
+                _set_int_if_present("kiln:max_goal_samples", "max_goal_samples")
+
                 obj.prim_path = str(prim.GetPath())
 
             self.objects.append(obj)
